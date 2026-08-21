@@ -2,19 +2,22 @@ import { CanvasEditor, SimulationControls, Toolbar } from '@/components';
 import { BlockLibrary } from '@/components/BlockLibrary';
 import { CreateBlockDialog } from '@/components/CreateBlockDialog';
 import { Toast } from '@/components/Toast';
+import { StatusBar } from '@/components/StatusBar';
 import type {
   CircuitState,
   CustomBlockDefinition,
   ElementId,
+  GateType,
   Viewport,
 } from '@/types/circuit';
 import { generateId } from '@/utils/generateId';
-import { analyzeSelection, expandBlockInstance } from '@/utils/blockUtils';
+import { analyzeSelection, expandBlockInstance, createBlockInstance } from '@/utils/blockUtils';
 import { useSimulation } from '@/hooks/useSimulation';
 import { useBlocks } from '@/hooks/useBlocks';
 import { useHistory } from '@/hooks/useHistory';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { showToast } from '@/utils/toastService';
+import './styles.css';
 
 // ---------------------------------------------------------------
 // Seed a small demo circuit so the canvas isn't empty
@@ -80,6 +83,10 @@ export default function App() {
   // Grid snap toggle
   const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
 
+  // Click-to-place mode: user clicks a gate in palette, then clicks canvas to place
+  const [pendingGateType, setPendingGateType] = useState<GateType | null>(null);
+  const [pendingBlockId, setPendingBlockId] = useState<ElementId | null>(null);
+
   // Create block dialog state
   const [createDialogVisible, setCreateDialogVisible] = useState(false);
   const [createDialogInputCount, setCreateDialogInputCount] = useState(0);
@@ -106,10 +113,6 @@ export default function App() {
       setCircuit(newCircuit);
     }
   });
-
-  const handleViewportChange = useCallback((vp: Viewport) => {
-    setViewport(vp);
-  }, []);
 
   const handleCircuitChange = useCallback(
     (newCircuit: CircuitState) => {
@@ -187,23 +190,60 @@ export default function App() {
   // Toolbar handlers
   // ---------------------------------------------------------------
 
-  const handleZoomIn = useCallback(() => {
-    setViewport((vp) => ({
-      ...vp,
-      zoom: Math.min(vp.zoom * 1.2, 5),
-    }));
+  // Smooth viewport animation (ease-out cubic) for zoom/reset/fit
+  const viewportAnimRafRef = useRef(0);
+
+  const animateViewportTo = useCallback(
+    (target: Partial<Viewport>, duration = 220) => {
+      const from: Viewport = { ...viewport };
+      const to: Viewport = {
+        zoom: Math.min(Math.max(target.zoom ?? from.zoom, 0.15), 5),
+        offsetX: target.offsetX ?? from.offsetX,
+        offsetY: target.offsetY ?? from.offsetY,
+      };
+      if (viewportAnimRafRef.current) {
+        cancelAnimationFrame(viewportAnimRafRef.current);
+      }
+      const startTime = performance.now();
+      const stepFn = (now: number) => {
+        const t = Math.min((now - startTime) / duration, 1);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setViewport({
+          zoom: from.zoom + (to.zoom - from.zoom) * eased,
+          offsetX: from.offsetX + (to.offsetX - from.offsetX) * eased,
+          offsetY: from.offsetY + (to.offsetY - from.offsetY) * eased,
+        });
+        if (t < 1) {
+          viewportAnimRafRef.current = requestAnimationFrame(stepFn);
+        } else {
+          viewportAnimRafRef.current = 0;
+        }
+      };
+      viewportAnimRafRef.current = requestAnimationFrame(stepFn);
+    },
+    [viewport],
+  );
+
+  const handleViewportChange = useCallback((vp: Viewport) => {
+    // User-driven pan/zoom cancels any running animation
+    if (viewportAnimRafRef.current) {
+      cancelAnimationFrame(viewportAnimRafRef.current);
+      viewportAnimRafRef.current = 0;
+    }
+    setViewport(vp);
   }, []);
+
+  const handleZoomIn = useCallback(() => {
+    animateViewportTo({ zoom: viewport.zoom * 1.2 });
+  }, [animateViewportTo, viewport]);
 
   const handleZoomOut = useCallback(() => {
-    setViewport((vp) => ({
-      ...vp,
-      zoom: Math.max(vp.zoom * 0.8, 0.15),
-    }));
-  }, []);
+    animateViewportTo({ zoom: viewport.zoom * 0.8 });
+  }, [animateViewportTo, viewport]);
 
   const handleResetView = useCallback(() => {
-    setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
-  }, []);
+    animateViewportTo({ zoom: 1, offsetX: 0, offsetY: 0 }, 260);
+  }, [animateViewportTo]);
 
   const handleFitAll = useCallback(() => {
     if (circuit.gates.length === 0) {
@@ -231,15 +271,82 @@ export default function App() {
     const clampedZoom = Math.max(zoom, 0.15);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
-    setViewport({
-      offsetX: canvasW / 2 - centerX * clampedZoom,
-      offsetY: canvasH / 2 - centerY * clampedZoom,
-      zoom: clampedZoom,
-    });
-  }, [circuit.gates, handleResetView]);
+    animateViewportTo(
+      {
+        zoom: clampedZoom,
+        offsetX: canvasW / 2 - centerX * clampedZoom,
+        offsetY: canvasH / 2 - centerY * clampedZoom,
+      },
+      300,
+    );
+  }, [circuit.gates, handleResetView, animateViewportTo]);
 
   const handleToggleGridSnap = useCallback(() => {
     setGridSnapEnabled((prev) => !prev);
+  }, []);
+
+  // ---------------------------------------------------------------
+  // Determine what circuit to show (declared early for handlers below)
+  // ---------------------------------------------------------------
+
+  const activeCircuit = editingBlockId && editingCircuit ? editingCircuit : circuit;
+
+  // ---------------------------------------------------------------
+  // Click-to-place mode
+  // ---------------------------------------------------------------
+
+  const handleSelectGateForPlacement = useCallback((gateType: GateType) => {
+    setPendingGateType((prev) => (prev === gateType ? null : gateType));
+    setPendingBlockId(null);
+  }, []);
+
+  const handleSelectBlockForPlacement = useCallback((blockId: ElementId) => {
+    setPendingBlockId((prev) => (prev === blockId ? null : blockId));
+    setPendingGateType(null);
+  }, []);
+
+  const handlePlaceGate = useCallback(
+    (gateType: GateType, position: { x: number; y: number }) => {
+      const newGate = {
+        id: generateId(),
+        type: gateType,
+        position,
+        outputState: false,
+      };
+      if (handleCircuitChange) {
+        handleCircuitChange({
+          ...activeCircuit,
+          gates: [...activeCircuit.gates, newGate],
+          selectedGateIds: [newGate.id],
+          selectedElementId: null,
+        });
+        showToast(`Placed ${gateType} gate`);
+      }
+    },
+    [activeCircuit, handleCircuitChange],
+  );
+
+  const handlePlaceBlock = useCallback(
+    (blockId: ElementId, position: { x: number; y: number }) => {
+      const blockDef = blocks.customBlocks.find((b) => b.id === blockId);
+      if (!blockDef) return;
+      const instance = createBlockInstance(blockId, position);
+      if (handleCircuitChange) {
+        handleCircuitChange({
+          ...activeCircuit,
+          gates: [...activeCircuit.gates, instance],
+          selectedGateIds: [instance.id],
+          selectedElementId: null,
+        });
+        showToast(`Placed block: ${blockDef.name}`);
+      }
+    },
+    [activeCircuit, handleCircuitChange, blocks.customBlocks],
+  );
+
+  const handleCancelPlacement = useCallback(() => {
+    setPendingGateType(null);
+    setPendingBlockId(null);
   }, []);
 
   // ---------------------------------------------------------------
@@ -386,12 +493,6 @@ export default function App() {
     [editingBlockId, editingCircuit, preEditCircuit, blocks],
   );
 
-  // ---------------------------------------------------------------
-  // Determine what circuit to show
-  // ---------------------------------------------------------------
-
-  const activeCircuit = editingBlockId && editingCircuit ? editingCircuit : circuit;
-
   return (
     <div
       style={{
@@ -524,6 +625,13 @@ export default function App() {
         gridSnapEnabled={gridSnapEnabled}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        simulationSpeed={simulation.speed}
+        simulationRunning={simulation.mode === 'running'}
+        pendingGateType={pendingGateType}
+        pendingBlockId={pendingBlockId}
+        onPlaceGate={handlePlaceGate}
+        onPlaceBlock={handlePlaceBlock}
+        onCancelPlacement={handleCancelPlacement}
       />
 
       {/* Bottom toolbar: zoom, grid, undo/redo, help */}
@@ -553,6 +661,10 @@ export default function App() {
           onDragBlock={() => {
             // No-op: drag is handled by HTML5 drag API
           }}
+          onSelectGateForPlacement={handleSelectGateForPlacement}
+          onSelectBlockForPlacement={handleSelectBlockForPlacement}
+          selectedGateType={pendingGateType}
+          selectedBlockId={pendingBlockId}
         />
       )}
 
@@ -564,6 +676,20 @@ export default function App() {
         onCreate={handleCreateBlock}
         onCancel={() => setCreateDialogVisible(false)}
       />
+
+      {/* Status bar */}
+      {!editingBlockId && (
+        <StatusBar
+          viewport={viewport}
+          gridSnapEnabled={gridSnapEnabled}
+          simulationMode={simulation.mode}
+          simulationSpeed={simulation.speed}
+          simulationTick={simulation.tick}
+          selectionCount={circuit.selectedGateIds.length}
+          gateCount={circuit.gates.length}
+          wireCount={circuit.wires.length}
+        />
+      )}
 
       <Toast />
     </div>

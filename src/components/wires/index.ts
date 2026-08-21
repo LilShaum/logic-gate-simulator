@@ -1,1 +1,9 @@
-export { drawWireOnCanvas, drawPreviewWire } from './wireRenderer';
+export {
+  drawWireOnCanvas,
+  drawPreviewWire,
+  drawSnapFeedback,
+  drawWireJunctions,
+  detectWireJunctions,
+  getWireTooltipInfo,
+} from './wireRenderer';
+export type { WireTooltipInfo } from './wireRenderer';

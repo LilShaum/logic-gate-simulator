@@ -11,3 +11,7 @@ export { SimulationControls } from './SimulationControls';
 export { CreateBlockDialog } from './CreateBlockDialog';
 export { BlockLibrary } from './BlockLibrary';
 export { Toolbar } from './Toolbar';
+export { Tooltip, TooltipButton } from './Tooltip';
+export { ContextMenu } from './ContextMenu';
+export type { ContextMenuItem } from './ContextMenu';
+export { StatusBar } from './StatusBar';

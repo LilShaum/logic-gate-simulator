@@ -1,0 +1,192 @@
+/* ============================================================
+   Global styles for UI polish — transitions, animations, tooltips
+   ============================================================ */
+
+/* Smooth transitions for all UI elements */
+* {
+  box-sizing: border-box;
+}
+
+button {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, 
+              opacity 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ---- Tooltip animation ---- */
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tooltip-container {
+  animation: tooltipFadeIn 0.12s ease-out;
+  pointer-events: none;
+  z-index: 500;
+}
+
+/* ---- Status bar fade in ---- */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.status-bar {
+  animation: slideUp 0.2s ease-out;
+}
+
+/* ---- Palette item hover effect ---- */
+.palette-item {
+  transition: background 0.12s ease, transform 0.1s ease, border-color 0.15s ease;
+  border-left: 2px solid transparent;
+}
+
+.palette-item:hover {
+  background: rgba(15, 52, 96, 0.35) !important;
+  border-left-color: #53a8b6;
+}
+
+.palette-item:active {
+  transform: scale(0.97);
+}
+
+.palette-item.selected {
+  background: rgba(83, 168, 182, 0.15) !important;
+  border-left-color: #00e676;
+}
+
+/* ---- Context menu animation ---- */
+@keyframes contextMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+    transform-origin: top left;
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.context-menu {
+  animation: contextMenuFadeIn 0.1s ease-out;
+}
+
+/* ---- Overlay fade ---- */
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(4px);
+  }
+}
+
+.overlay-backdrop {
+  animation: overlayFadeIn 0.2s ease-out;
+}
+
+/* ---- Help overlay panel slide ---- */
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.overlay-panel {
+  animation: panelSlideIn 0.2s ease-out;
+}
+
+/* ---- Category collapse/expand animation ---- */
+.category-body {
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+
+.category-body.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.category-body.expanded {
+  max-height: 800px;
+  opacity: 1;
+}
+
+/* ---- Search input styles ---- */
+.search-input {
+  width: 100%;
+  padding: 5px 8px 5px 24px;
+  font-size: 11px;
+  font-family: monospace;
+  background: #0d1b30;
+  color: #eaeaea;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.search-input:focus {
+  border-color: #53a8b6;
+  box-shadow: 0 0 0 1px rgba(83, 168, 182, 0.3);
+}
+
+.search-input::placeholder {
+  color: #555;
+}
+
+/* ---- Scrollbar styling for palette ---- */
+.palette-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.palette-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.palette-scroll::-webkit-scrollbar-thumb {
+  background: #0f3460;
+  border-radius: 2px;
+}
+
+.palette-scroll::-webkit-scrollbar-thumb:hover {
+  background: #53a8b6;
+}
+
+/* ---- Drag ghost preview ---- */
+.drag-preview {
+  opacity: 0.85;
+  transform: scale(1.05);
+}

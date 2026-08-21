@@ -11,7 +11,7 @@ import type {
 const makeInputPorts = (count: number, width: number): Port[] =>
   Array.from({ length: count }, (_, i) => ({
     id: '', // assigned at creation time
-    name: `in${i}`,
+    name: String.fromCharCode(65 + i), // A, B, C, ...
     direction: 'input',
     offset: {
       x: 0,
@@ -22,7 +22,7 @@ const makeInputPorts = (count: number, width: number): Port[] =>
 const makeOutputPorts = (count: number, width: number): Port[] =>
   Array.from({ length: count }, (_, i) => ({
     id: '',
-    name: `out${i}`,
+    name: count === 1 ? 'OUT' : `OUT${i + 1}`,
     direction: 'output',
     offset: {
       x: width,

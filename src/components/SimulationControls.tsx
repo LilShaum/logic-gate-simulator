@@ -1,13 +1,15 @@
 // ============================================================
 // SimulationControls — play / pause / step / reset / speed UI
+//   Modern design with tooltips, grouped buttons, transitions
 // ============================================================
 
 import type { SimulationMode, SimulationSpeed } from '@/types/circuit';
+import { TooltipButton } from './Tooltip';
 
-const SPEED_OPTIONS: { value: SimulationSpeed; label: string }[] = [
-  { value: 'slow', label: '0.5x' },
-  { value: 'normal', label: '1x' },
-  { value: 'fast', label: '5x' },
+const SPEED_OPTIONS: { value: SimulationSpeed; label: string; title: string }[] = [
+  { value: 'slow', label: '0.5x', title: 'Slow speed (0.5x)' },
+  { value: 'normal', label: '1x', title: 'Normal speed (1x)' },
+  { value: 'fast', label: '5x', title: 'Fast speed (5x)' },
 ];
 
 interface SimulationControlsProps {
@@ -53,51 +55,54 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   return (
     <div style={styles.container}>
       <div style={styles.row}>
-        {/* Play / Pause */}
-        <button
-          style={{
-            ...styles.button,
-            ...(mode === 'running' ? styles.buttonActive : {}),
-          }}
-          onClick={handlePlayPause}
-          title={playPauseTitle}
-        >
-          {playPauseLabel}
-        </button>
+        {/* Group: Playback */}
+        <div style={styles.group}>
+          <TooltipButton
+            tooltip={playPauseTitle}
+            style={{
+              ...styles.button,
+              ...(mode === 'running' ? styles.buttonActive : {}),
+            }}
+            onClick={handlePlayPause}
+          >
+            {playPauseLabel}
+          </TooltipButton>
 
-        {/* Single Step */}
-        <button
-          style={styles.button}
-          onClick={onStep}
-          title="Single step"
-          disabled={mode === 'running'}
-        >
-          ⏭
-        </button>
+          <TooltipButton
+            tooltip="Single step"
+            style={styles.button}
+            onClick={onStep}
+            disabled={mode === 'running'}
+          >
+            ⏭
+          </TooltipButton>
 
-        {/* Reset */}
-        <button
-          style={styles.button}
-          onClick={onReset}
-          title="Reset simulation"
-        >
-          ⏹
-        </button>
+          <TooltipButton
+            tooltip="Reset simulation"
+            style={styles.button}
+            onClick={onReset}
+          >
+            ⏹
+          </TooltipButton>
+        </div>
 
-        {/* Speed selector */}
+        {/* Separator */}
+        <div style={styles.separator} />
+
+        {/* Group: Speed */}
         <div style={styles.speedGroup}>
           {SPEED_OPTIONS.map((opt) => (
-            <button
+            <TooltipButton
               key={opt.value}
+              tooltip={opt.title}
               style={{
                 ...styles.speedBtn,
                 ...(speed === opt.value ? styles.speedBtnActive : {}),
               }}
               onClick={() => onSpeedChange(opt.value)}
-              title={`Speed: ${opt.label}`}
             >
               {opt.label}
-            </button>
+            </TooltipButton>
           ))}
         </div>
 
@@ -109,7 +114,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
 };
 
 // ---------------------------------------------------------------
-// Inline styles (matching dark theme)
+// Styles
 // ---------------------------------------------------------------
 
 const styles: Record<string, React.CSSProperties> = {
@@ -118,62 +123,79 @@ const styles: Record<string, React.CSSProperties> = {
     top: 12,
     left: 12,
     zIndex: 100,
-    background: 'rgba(22, 33, 62, 0.92)',
-    borderRadius: 8,
-    padding: '6px 10px',
-    border: '1px solid #0f3460',
-    backdropFilter: 'blur(6px)',
+    background: 'rgba(10, 15, 30, 0.94)',
+    borderRadius: 10,
+    padding: '5px 8px',
+    border: '1px solid #1a3050',
+    backdropFilter: 'blur(8px)',
     userSelect: 'none',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(15,52,96,0.2)',
   },
   row: {
     display: 'flex',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
+  },
+  group: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
   },
   button: {
-    width: 32,
-    height: 32,
+    width: 30,
+    height: 28,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: 16,
-    background: '#1a1a2e',
-    color: '#eaeaea',
-    border: '1px solid #0f3460',
-    borderRadius: 6,
+    fontSize: 14,
+    background: '#111a30',
+    color: '#c0c0d0',
+    border: '1px solid #1a3050',
+    borderRadius: 5,
     cursor: 'pointer',
     lineHeight: 1,
     padding: 0,
+    fontFamily: 'monospace',
+    transition: 'all 0.12s ease',
   },
   buttonActive: {
-    background: '#0f3460',
+    background: 'rgba(0, 230, 118, 0.12)',
     borderColor: '#00e676',
+    color: '#00e676',
+  },
+  separator: {
+    width: 1,
+    height: 20,
+    background: 'linear-gradient(to bottom, transparent, #1a3050, transparent)',
+    margin: '0 2px',
   },
   speedGroup: {
     display: 'flex',
-    gap: 2,
-    marginLeft: 6,
-    border: '1px solid #0f3460',
-    borderRadius: 6,
+    gap: 1,
+    border: '1px solid #1a3050',
+    borderRadius: 5,
     overflow: 'hidden',
   },
   speedBtn: {
-    padding: '4px 8px',
-    fontSize: 11,
+    padding: '3px 7px',
+    fontSize: 10,
     fontFamily: 'monospace',
-    background: '#1a1a2e',
-    color: '#8888aa',
+    background: '#111a30',
+    color: '#666',
     border: 'none',
+    borderRight: '1px solid #1a3050',
     cursor: 'pointer',
+    transition: 'all 0.12s ease',
+    height: 26,
   },
   speedBtnActive: {
-    background: '#0f3460',
-    color: '#00e676',
+    background: 'rgba(83, 168, 182, 0.15)',
+    color: '#53a8b6',
   },
   tickLabel: {
-    marginLeft: 8,
-    fontSize: 11,
+    marginLeft: 4,
+    fontSize: 10,
     fontFamily: 'monospace',
-    color: '#8888aa',
+    color: '#555',
   },
 };
