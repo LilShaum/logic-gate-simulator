@@ -3,7 +3,7 @@
 // ============================================================
 
 import type { Gate, Position, Viewport } from '@/types/circuit';
-import { getGateConfig } from './gateConfigs';
+import { getConfigForGate } from './gateConfigs';
 import { isBlockInstance } from './blockUtils';
 import { getBlockGateConfig } from './blockUtils';
 import type { CustomBlockDefinition } from '@/types/circuit';
@@ -68,7 +68,7 @@ export const getGateWorldBBox = (
       height = 60;
     }
   } else {
-    const config = getGateConfig(gate.type);
+    const config = getConfigForGate(gate);
     width = config.width;
     height = config.height;
   }

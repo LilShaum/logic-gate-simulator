@@ -9,9 +9,9 @@ import type {
   Position,
   Wire,
 } from '@/types/circuit';
-import { getGateConfig } from '@/utils/gateConfigs';
+import { getConfigForGate } from '@/utils/gateConfigs';
 import { getPortWorldPosition } from '@/components/gates';
-import { isBlockInstance } from '@/utils/blockUtils';
+
 import { generateId } from '@/utils/generateId';
 
 // ---------------------------------------------------------------
@@ -58,22 +58,19 @@ const segmentIntersectsBox = (
 // Smart Routing — avoids overlapping gates
 // ---------------------------------------------------------------
 
-/** Resolve config for any gate (handles block instances) */
-const resolveConfig = (gate: Gate): GateConfig => {
-  if (isBlockInstance(gate) && gate.blockId) {
-    // For smart routing we just need width/height, so return a minimal config
-    // The block config isn't available here without the block definitions,
-    // so we fall back to the gate's base config. Width/height are set by
-    // the block config at render time, but for routing we use default sizes.
-    return getGateConfig(gate.type);
-  }
-  return getGateConfig(gate.type);
-};
+
+/** How far before an input pin a wire turns to make its final approach */
+const APPROACH = 18;
+/** Clearance kept around gates when routing around them */
+const CLEARANCE = 18;
 
 /**
- * Compute smart route waypoints between two port positions.
- * Routes around gate bounding boxes to avoid overlapping.
- * Returns intermediate waypoints (not including start/end).
+ * Compute the intermediate waypoints between two ports.
+ *
+ * The default shape runs horizontally at the source's height for most
+ * of the distance, then turns down (or up) just before the destination
+ * pin. Fanning one output into several inputs therefore produces one
+ * shared horizontal run instead of a bundle of diverging diagonals.
  */
 export const computeSmartRoute = (
   from: Position,
@@ -82,90 +79,82 @@ export const computeSmartRoute = (
   toGateId: string,
   gates: Gate[],
 ): Position[] => {
-  // First try simple Manhattan route
-  const midX = (from.x + to.x) / 2;
-  const manhattanWps: Position[] = [
-    { x: midX, y: from.y },
-    { x: midX, y: to.y },
-  ];
+  // Near-level ports get a direct connection. Forcing a hard vertical
+  // jog for a two-pixel height difference is what made short wires look
+  // like they had a stray tick mark in them.
+  if (Math.abs(from.y - to.y) <= 10) return [];
 
-  // Get all gate bounding boxes (excluding source and target gates)
   const obstacles = gates
     .filter((g) => g.id !== fromGateId && g.id !== toGateId)
-    .map((g) => getGateBoundingBox(g, resolveConfig(g), 15));
+    .map((g) => getGateBoundingBox(g, getConfigForGate(g), CLEARANCE));
 
-  // Check if the simple Manhattan route intersects any gate
-  const intersectsAny = (wps: Position[]): boolean => {
+  const clear = (wps: Position[]): boolean => {
     const pts = [from, ...wps, to];
     for (let i = 0; i < pts.length - 1; i++) {
       for (const box of obstacles) {
         if (segmentIntersectsBox(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, box)) {
-          return true;
+          return false;
         }
       }
     }
-    return false;
+    return true;
   };
 
-  if (!intersectsAny(manhattanWps)) {
-    return manhattanWps;
+  const turnAt = (x: number): Position[] => [
+    { x, y: from.y },
+    { x, y: to.y },
+  ];
+
+  const candidates: Position[][] = [];
+
+  if (to.x - from.x > APPROACH * 2) {
+    // Forward run: turn late, just before the pin
+    candidates.push(turnAt(to.x - APPROACH));
+    // then progressively earlier turns
+    candidates.push(turnAt((from.x + to.x) / 2));
+    candidates.push(turnAt(from.x + APPROACH));
+  } else {
+    // The destination is behind the source (feedback). Go out, around,
+    // and back in — never straight through the gate that drives it.
+    const relevant = obstacles.filter(
+      (b) => b.x2 >= Math.min(from.x, to.x) - CLEARANCE && b.x <= Math.max(from.x, to.x) + CLEARANCE,
+    );
+    const below = relevant.length ? Math.max(...relevant.map((b) => b.y2)) + CLEARANCE : Math.max(from.y, to.y) + 40;
+    const above = relevant.length ? Math.min(...relevant.map((b) => b.y)) - CLEARANCE : Math.min(from.y, to.y) - 40;
+
+    for (const laneY of [below, above]) {
+      candidates.push([
+        { x: from.x + APPROACH, y: from.y },
+        { x: from.x + APPROACH, y: laneY },
+        { x: to.x - APPROACH, y: laneY },
+        { x: to.x - APPROACH, y: to.y },
+      ]);
+    }
   }
 
-  // Simple Manhattan route intersects a gate — try routing above or below
-  // Find the Y range of all obstacles between the from and to X positions
-  const minX = Math.min(from.x, to.x);
-  const maxX = Math.max(from.x, to.x);
-
-  const relevantObstacles = obstacles.filter(
-    (b) => !(b.x2 < minX || b.x > maxX),
+  // Detour lanes above and below everything in the way
+  const between = obstacles.filter(
+    (b) => b.x2 >= Math.min(from.x, to.x) && b.x <= Math.max(from.x, to.x),
   );
-
-  if (relevantObstacles.length === 0) {
-    return manhattanWps;
+  if (between.length > 0) {
+    const lower = Math.max(...between.map((b) => b.y2)) + CLEARANCE;
+    const upper = Math.min(...between.map((b) => b.y)) - CLEARANCE;
+    for (const laneY of [lower, upper]) {
+      candidates.push([
+        { x: from.x + APPROACH, y: from.y },
+        { x: from.x + APPROACH, y: laneY },
+        { x: to.x - APPROACH, y: laneY },
+        { x: to.x - APPROACH, y: to.y },
+      ]);
+    }
   }
 
-  // Try routing above all obstacles
-  const maxY = Math.max(...relevantObstacles.map((b) => b.y2));
-  const aboveRoute: Position[] = [
-    { x: from.x, y: maxY + 30 },
-    { x: to.x, y: maxY + 30 },
-  ];
-
-  if (!intersectsAny(aboveRoute)) {
-    return aboveRoute;
+  for (const wps of candidates) {
+    if (clear(wps)) return wps;
   }
 
-  // Try routing below all obstacles
-  const minY = Math.min(...relevantObstacles.map((b) => b.y));
-  const belowRoute: Position[] = [
-    { x: from.x, y: minY - 30 },
-    { x: to.x, y: minY - 30 },
-  ];
-
-  if (!intersectsAny(belowRoute)) {
-    return belowRoute;
-  }
-
-  // Try a more aggressive route: go far above, then across, then down
-  const farAbove: Position[] = [
-    { x: from.x, y: maxY + 60 },
-    { x: to.x, y: maxY + 60 },
-  ];
-  if (!intersectsAny(farAbove)) {
-    return farAbove;
-  }
-
-  // Try far below
-  const farBelow: Position[] = [
-    { x: from.x, y: minY - 60 },
-    { x: to.x, y: minY - 60 },
-  ];
-  if (!intersectsAny(farBelow)) {
-    return farBelow;
-  }
-
-  // Fallback: use simple Manhattan even if it overlaps (best effort)
-  return manhattanWps;
+  // Nothing was clear — take the tidiest shape anyway
+  return candidates[0] ?? turnAt((from.x + to.x) / 2);
 };
 
 // ---------------------------------------------------------------
@@ -256,8 +245,8 @@ export const getWireScreenPoints = (
   const toGate = gates.find((g) => g.id === wire.toGateId);
   if (!fromGate || !toGate) return [];
 
-  const fromConfig = resolveConfig(fromGate);
-  const toConfig = resolveConfig(toGate);
+  const fromConfig = getConfigForGate(fromGate);
+  const toConfig = getConfigForGate(toGate);
 
   const fromPort = getPortWorldPosition(fromGate, fromConfig, wire.fromPortIndex, false);
   const toPort = getPortWorldPosition(toGate, toConfig, wire.toPortIndex, true);
@@ -284,8 +273,8 @@ export const getWireWorldPoints = (
   const toGate = gates.find((g) => g.id === wire.toGateId);
   if (!fromGate || !toGate) return [];
 
-  const fromConfig = resolveConfig(fromGate);
-  const toConfig = resolveConfig(toGate);
+  const fromConfig = getConfigForGate(fromGate);
+  const toConfig = getConfigForGate(toGate);
 
   const fromPort = getPortWorldPosition(fromGate, fromConfig, wire.fromPortIndex, false);
   const toPort = getPortWorldPosition(toGate, toConfig, wire.toPortIndex, true);
@@ -327,8 +316,8 @@ export const validateConnection = (
     return { valid: false, reason: 'Gate not found' };
   }
 
-  const fromConfig = getGateConfig(fromGate.type);
-  const toConfig = getGateConfig(toGate.type);
+  const fromConfig = getConfigForGate(fromGate);
+  const toConfig = getConfigForGate(toGate);
 
   // Must connect output → input
   if (fromPortIndex >= fromConfig.outputs.length) {
@@ -467,7 +456,7 @@ export const getPreviewWirePoints = (
   fromPortIndex: number,
   mouseWorld: Position,
 ): Position[] => {
-  const config = getGateConfig(fromGate.type);
+  const config = getConfigForGate(fromGate);
   const fromPort = getPortWorldPosition(fromGate, config, fromPortIndex, false);
 
   // Compute control points for a smooth cubic bezier curve

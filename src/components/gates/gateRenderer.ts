@@ -1,161 +1,133 @@
+// ============================================================
+// Gate rendering
+//
+// Every shape is drawn inside the box that gateConfigs.ts
+// declares, and every port sits exactly where gateConfigs.ts
+// says it does. Short lead lines join the two, so a symbol and
+// its pins can never drift apart.
+// ============================================================
+
 import type { Gate, GateConfig, Viewport } from '@/types/circuit';
+import { BUBBLE_R, LEAD } from '@/utils/gateConfigs';
 
 // ---------------------------------------------------------------
-// Color palette for gates — polished, modern look
+// Palette
 // ---------------------------------------------------------------
 export const GATE_COLORS = {
-  body: '#16213e',
-  bodyGradientTop: '#1e2d4a',
-  bodyGradientBottom: '#111a30',
-  border: '#2a3f6a',
-  borderSelected: '#e94560',
-  borderHover: '#53a8b6',
-  text: '#eaeaea',
-  textDim: '#8899bb',
-  portDot: '#53a8b6',
-  portActive: '#00e676',
-  portInactive: '#3a3a5c',
-  portRing: '#0a0a1a',
-  outputHigh: '#00e676',
-  outputLow: '#3a3a5c',
-  inputHigh: '#00e676',
-  inputLow: '#3a3a5c',
-  // Signal LED on gate body
-  signalHigh: '#00e676',
-  signalLow: '#3a3a5c',
-  signalGlow: 'rgba(0, 230, 118, 0.35)',
-  // Selection / hover
-  selectionGlow: 'rgba(233, 69, 96, 0.45)',
-  hoverGlow: 'rgba(83, 168, 182, 0.25)',
-  // I/O specific colors
-  switchOn: '#00e676',
-  switchOff: '#e94560',
-  ledOn: '#00e676',
-  ledOff: '#3a3a5c',
-  ledGlow: 'rgba(0, 230, 118, 0.4)',
-  constantHigh: '#00e676',
-  constantLow: '#e94560',
-  // Port hover / interaction colors
-  portHover: '#88ddff',
-  portValid: '#00e676',
-  portInvalid: '#e94560',
-  portSnapGlow: 'rgba(83, 168, 182, 0.5)',
+  body: '#161f36',
+  bodyGradientTop: '#1f2b47',
+  bodyGradientBottom: '#141c30',
+  border: '#3a4d75',
+  borderSelected: '#ffb454',
+  borderHover: '#58b6ff',
+  text: '#e6ecf7',
+  textDim: '#8b9ac0',
+
+  // Signal states — one green for "high" everywhere in the app
+  signalHigh: '#3ddc97',
+  signalLow: '#4a5872',
+  signalGlow: 'rgba(61, 220, 151, 0.45)',
+
+  portDot: '#6d7f9f',
+  portActive: '#3ddc97',
+  portInactive: '#3a4560',
+  portRing: '#0b1020',
+  outputHigh: '#3ddc97',
+  outputLow: '#4a5872',
+  inputHigh: '#3ddc97',
+  inputLow: '#4a5872',
+
+  selectionGlow: 'rgba(255, 180, 84, 0.45)',
+  hoverGlow: 'rgba(88, 182, 255, 0.28)',
+
+  switchOn: '#3ddc97',
+  switchOff: '#5a6684',
+  ledOn: '#3ddc97',
+  ledOff: '#333e57',
+  ledGlow: 'rgba(61, 220, 151, 0.5)',
+  constantHigh: '#3ddc97',
+  constantLow: '#7c89a6',
+  clock: '#58b6ff',
+
+  portHover: '#9fd6ff',
+  portValid: '#3ddc97',
+  portInvalid: '#ff6b6b',
+  portSnapGlow: 'rgba(88, 182, 255, 0.55)',
 };
 
 // ---------------------------------------------------------------
-// Shared drawing helpers
+// Small helpers
 // ---------------------------------------------------------------
 
-/** Create a body gradient (top-to-bottom subtle highlight) */
-const createBodyGradient = (
+const bodyGradient = (
   ctx: CanvasRenderingContext2D,
-  x: number,
   y: number,
   h: number,
 ): CanvasGradient => {
-  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  const grad = ctx.createLinearGradient(0, y, 0, y + h);
   grad.addColorStop(0, GATE_COLORS.bodyGradientTop);
   grad.addColorStop(1, GATE_COLORS.bodyGradientBottom);
   return grad;
 };
 
-/** Draw selection glow (behind gate) */
-const drawSelectionGlow = (
+/** Fill + stroke the path currently on the context */
+const paintBody = (
   ctx: CanvasRenderingContext2D,
-  x: number,
   y: number,
-  w: number,
   h: number,
-  zoom: number,
+  stroke: string,
+  lineWidth: number,
 ) => {
-  ctx.save();
-  ctx.shadowColor = GATE_COLORS.selectionGlow;
-  ctx.shadowBlur = 18 * zoom;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.beginPath();
-  ctx.roundRect(x - 2 * zoom, y - 2 * zoom, w + 4 * zoom, h + 4 * zoom, 8 * zoom);
-  ctx.fillStyle = 'rgba(233, 69, 96, 0.08)';
+  ctx.fillStyle = bodyGradient(ctx, y, h);
   ctx.fill();
-  ctx.restore();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 };
 
-/** Draw hover elevation effect */
-const drawHoverGlow = (
+/** Centred label, hidden when the gate is too small to read */
+const drawLabel = (
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  zoom: number,
-) => {
-  ctx.save();
-  ctx.shadowColor = GATE_COLORS.hoverGlow;
-  ctx.shadowBlur = 12 * zoom;
-  ctx.shadowOffsetY = 2 * zoom;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 6 * zoom);
-  ctx.fillStyle = 'rgba(83, 168, 182, 0.05)';
-  ctx.fill();
-  ctx.restore();
-};
-
-/** Draw a subtle drop shadow under a gate body */
-const drawDropShadow = (
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  zoom: number,
-) => {
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-  ctx.shadowBlur = 6 * zoom;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 3 * zoom;
-  // Draw a filled rect just for the shadow
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 6 * zoom);
-  ctx.fillStyle = 'rgba(0,0,0,0.01)';
-  ctx.fill();
-  ctx.restore();
-};
-
-/** Draw a small signal-state LED indicator on the gate body */
-const drawSignalLed = (
-  ctx: CanvasRenderingContext2D,
+  text: string,
   cx: number,
   cy: number,
   zoom: number,
+  size = 11,
+  color = GATE_COLORS.text,
+) => {
+  if (zoom < 0.45) return;
+  ctx.fillStyle = color;
+  ctx.font = `600 ${size * zoom}px "Inter", "Segoe UI", system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, cy);
+};
+
+/** An inversion bubble sitting on the nose of a gate */
+const drawBubble = (
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  stroke: string,
+  lineWidth: number,
   active: boolean,
 ) => {
-  const r = 3 * zoom;
-  // Glow when high
-  if (active) {
-    const glowR = r * 3;
-    const glow = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, glowR);
-    glow.addColorStop(0, GATE_COLORS.signalGlow);
-    glow.addColorStop(1, 'transparent');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = active ? GATE_COLORS.signalHigh : GATE_COLORS.signalLow;
+  ctx.fillStyle = active ? GATE_COLORS.signalHigh : GATE_COLORS.bodyGradientBottom;
   ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.portRing;
-  ctx.lineWidth = 0.8;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
   ctx.stroke();
 };
 
 // ---------------------------------------------------------------
-// Port position calculation
+// Geometry / hit testing (shared with wire routing)
 // ---------------------------------------------------------------
 
-/** Get the world-space position of a port on a gate */
+/** World-space position of a gate's port */
 export const getPortWorldPosition = (
   gate: Gate,
   config: GateConfig,
@@ -163,36 +135,30 @@ export const getPortWorldPosition = (
   isInput: boolean,
 ): { x: number; y: number } => {
   const ports = isInput ? config.inputs : config.outputs;
-  if (portIndex >= ports.length) {
-    return { x: gate.position.x, y: gate.position.y };
-  }
   const port = ports[portIndex];
+  if (!port) return { x: gate.position.x, y: gate.position.y };
   return {
     x: gate.position.x + port.offset.x,
     y: gate.position.y + port.offset.y,
   };
 };
 
-// ---------------------------------------------------------------
-// Hit testing
-// ---------------------------------------------------------------
-
-/** Check if a world-space point is inside a gate's bounding box */
+/** Is a world-space point inside a gate's bounding box? */
 export const isPointInGate = (
   px: number,
   py: number,
   gate: Gate,
   config: GateConfig,
-): boolean => {
-  return (
-    px >= gate.position.x &&
-    px <= gate.position.x + config.width &&
-    py >= gate.position.y &&
-    py <= gate.position.y + config.height
-  );
-};
+): boolean =>
+  px >= gate.position.x &&
+  px <= gate.position.x + config.width &&
+  py >= gate.position.y &&
+  py <= gate.position.y + config.height;
 
-/** Check if a world-space point is near a port (within radius) */
+/**
+ * Is a world-space point near a port? The hit radius is kept
+ * constant in *screen* pixels so ports stay clickable when zoomed out.
+ */
 export const isPointNearPort = (
   px: number,
   py: number,
@@ -203,718 +169,419 @@ export const isPointNearPort = (
   zoom: number,
 ): boolean => {
   const pos = getPortWorldPosition(gate, config, portIndex, isInput);
-  // Larger hit radius for input (square) and output (circle) ports
-  const radius = isInput ? 10 / zoom : 10 / zoom;
+  const radius = 11 / Math.max(zoom, 0.2);
   const dx = px - pos.x;
   const dy = py - pos.y;
   return dx * dx + dy * dy <= radius * radius;
 };
 
 // ---------------------------------------------------------------
-// Drawing helpers — ports
+// Ports
 // ---------------------------------------------------------------
 
-/** Drawing parameters for port state during connection mode */
 export interface PortDrawState {
-  /** Whether this port is being hovered */
   hovered?: boolean;
-  /** Highlight state: 'valid' = green glow, 'invalid' = red glow, undefined = no highlight */
   highlight?: 'valid' | 'invalid';
-  /** Whether this port is a magnetic snap target (shows glow ring) */
   snapTarget?: boolean;
 }
 
-/** Draw a single input port (square-ish shape with rounded corners) */
-const drawInputPort = (
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  zoom: number,
-  active: boolean,
-  state?: PortDrawState,
-) => {
-  const baseSize = 9 * zoom;
-  const isHovered = state?.hovered ?? false;
-  const size = isHovered ? baseSize * 1.35 : baseSize;
+const PORT_R = 4;
 
-  // Snap target glow ring
-  if (state?.snapTarget) {
-    ctx.save();
-    ctx.shadowColor = GATE_COLORS.portSnapGlow;
-    ctx.shadowBlur = 14 * zoom;
-    ctx.beginPath();
-    ctx.roundRect(cx - size - 3 * zoom, cy - size - 3 * zoom, (size + 3 * zoom) * 2, (size + 3 * zoom) * 2, 3 * zoom);
-    ctx.strokeStyle = GATE_COLORS.portSnapGlow;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Highlight ring (valid/invalid)
-  if (state?.highlight) {
-    ctx.save();
-    const hlColor = state.highlight === 'valid' ? GATE_COLORS.portValid : GATE_COLORS.portInvalid;
-    ctx.shadowColor = hlColor;
-    ctx.shadowBlur = 10 * zoom;
-    ctx.beginPath();
-    ctx.roundRect(cx - size - 2 * zoom, cy - size - 2 * zoom, (size + 2 * zoom) * 2, (size + 2 * zoom) * 2, 3 * zoom);
-    ctx.strokeStyle = hlColor;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Outer ring (dark border)
-  ctx.beginPath();
-  ctx.roundRect(cx - size - 1.5 * zoom, cy - size - 1.5 * zoom, (size + 1.5 * zoom) * 2, (size + 1.5 * zoom) * 2, 2 * zoom);
-  ctx.fillStyle = GATE_COLORS.portRing;
-  ctx.fill();
-
-  // Inner square (with rounded corners for polished look)
-  ctx.beginPath();
-  ctx.roundRect(cx - size, cy - size, size * 2, size * 2, 2 * zoom);
-  ctx.fillStyle = active ? GATE_COLORS.portActive : GATE_COLORS.portDot;
-  ctx.fill();
-
-  // Subtle inner highlight (top-left)
-  ctx.beginPath();
-  ctx.roundRect(cx - size * 0.6, cy - size * 0.6, size * 0.5, size * 0.5, 1 * zoom);
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  ctx.fill();
-};
-
-/** Draw a single output port (circle shape) */
-const drawOutputPort = (
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  zoom: number,
-  active: boolean,
-  state?: PortDrawState,
-) => {
-  const baseR = 5 * zoom;
-  const isHovered = state?.hovered ?? false;
-  const r = isHovered ? baseR * 1.35 : baseR;
-
-  // Snap target glow ring
-  if (state?.snapTarget) {
-    ctx.save();
-    ctx.shadowColor = GATE_COLORS.portSnapGlow;
-    ctx.shadowBlur = 14 * zoom;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r + 5 * zoom, 0, Math.PI * 2);
-    ctx.strokeStyle = GATE_COLORS.portSnapGlow;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Highlight ring (valid/invalid)
-  if (state?.highlight) {
-    ctx.save();
-    const hlColor = state.highlight === 'valid' ? GATE_COLORS.portValid : GATE_COLORS.portInvalid;
-    ctx.shadowColor = hlColor;
-    ctx.shadowBlur = 10 * zoom;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r + 4 * zoom, 0, Math.PI * 2);
-    ctx.strokeStyle = hlColor;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Outer ring
-  ctx.beginPath();
-  ctx.arc(cx, cy, r + 1.5 * zoom, 0, Math.PI * 2);
-  ctx.fillStyle = GATE_COLORS.portRing;
-  ctx.fill();
-
-  // Inner circle
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = active ? GATE_COLORS.portActive : GATE_COLORS.portDot;
-  ctx.fill();
-
-  // Subtle inner highlight
-  ctx.beginPath();
-  ctx.arc(cx - r * 0.2, cy - r * 0.25, r * 0.35, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fill();
-};
-
-/** Draw a port with label — dispatches to input (square) or output (circle) shape */
-const drawPortDot = (
+const drawPort = (
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   zoom: number,
   active: boolean,
   isInput: boolean,
-  label?: string,
-  labelSide?: 'left' | 'right',
   state?: PortDrawState,
 ) => {
+  const r = PORT_R * zoom * (state?.hovered ? 1.4 : 1);
+
+  if (state?.snapTarget || state?.highlight) {
+    const color = state.highlight === 'invalid' ? GATE_COLORS.portInvalid : GATE_COLORS.portValid;
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12 * zoom;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 4 * zoom, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.75;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.beginPath();
   if (isInput) {
-    drawInputPort(ctx, cx, cy, zoom, active, state);
+    // Inputs are squares, outputs circles — tells you which end is which
+    ctx.rect(cx - r, cy - r, r * 2, r * 2);
   } else {
-    drawOutputPort(ctx, cx, cy, zoom, active, state);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
   }
+  ctx.fillStyle = state?.hovered
+    ? GATE_COLORS.portHover
+    : active
+      ? GATE_COLORS.portActive
+      : GATE_COLORS.portDot;
+  ctx.fill();
 
-  // Port label
-  if (label) {
-    ctx.fillStyle = state?.hovered ? GATE_COLORS.portHover : GATE_COLORS.textDim;
-    ctx.font = `${(state?.hovered ? 8 : 7) * zoom}px monospace`;
-    ctx.textBaseline = 'middle';
-    if (labelSide === 'left') {
-      ctx.textAlign = 'right';
-      const offset = isInput ? (state?.hovered ? 13 : 11) : (state?.hovered ? 11 : 9);
-      ctx.fillText(label, cx - offset * zoom, cy);
-    } else {
-      ctx.textAlign = 'left';
-      const offset = isInput ? (state?.hovered ? 9 : 7) : (state?.hovered ? 13 : 11);
-      ctx.fillText(label, cx + offset * zoom, cy);
-    }
-  }
+  // Thin outline for contrast against the grid, drawn *around* the port
+  // rather than as a disc behind it, so an arriving wire is not clipped.
+  ctx.strokeStyle = GATE_COLORS.portRing;
+  ctx.lineWidth = Math.max(0.75, 1 * zoom);
+  ctx.stroke();
 };
 
-/** Draw all ports for a gate in canvas coordinates */
-const drawPorts = (
+/** Short line from a port out to the gate body */
+const drawLead = (
   ctx: CanvasRenderingContext2D,
-  gate: Gate,
-  config: GateConfig,
-  vp: Viewport,
-  inputStates: boolean[],
-  portStates?: { inputs?: PortDrawState[]; outputs?: PortDrawState[] },
+  fromX: number,
+  toX: number,
+  y: number,
+  zoom: number,
+  active: boolean,
 ) => {
-  // Input ports (left side)
-  config.inputs.forEach((port, i) => {
-    const cx = (gate.position.x + port.offset.x) * vp.zoom + vp.offsetX;
-    const cy = (gate.position.y + port.offset.y) * vp.zoom + vp.offsetY;
-    const active = inputStates[i] ?? false;
-    const state = portStates?.inputs?.[i];
-    drawPortDot(ctx, cx, cy, vp.zoom, active, true, port.name, 'left', state);
-  });
+  ctx.beginPath();
+  ctx.moveTo(fromX, y);
+  ctx.lineTo(toX, y);
+  ctx.strokeStyle = active ? GATE_COLORS.signalHigh : GATE_COLORS.border;
+  ctx.lineWidth = Math.max(1, 1.75 * zoom);
+  ctx.lineCap = 'round';
+  ctx.stroke();
+};
 
-  // Output port (right side)
-  config.outputs.forEach((port, i) => {
-    const cx = (gate.position.x + port.offset.x) * vp.zoom + vp.offsetX;
-    const cy = (gate.position.y + port.offset.y) * vp.zoom + vp.offsetY;
-    const state = portStates?.outputs?.[i];
-    drawPortDot(ctx, cx, cy, vp.zoom, gate.outputState, false, port.name, 'right', state);
-  });
+/** Port name, drawn just inside the body */
+const drawPortLabel = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  zoom: number,
+  align: CanvasTextAlign,
+) => {
+  if (zoom < 0.75 || !text) return;
+  ctx.fillStyle = GATE_COLORS.textDim;
+  ctx.font = `${8 * zoom}px "JetBrains Mono", ui-monospace, monospace`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
 };
 
 // ---------------------------------------------------------------
-// Parameters object for gate shape renderers
+// Shape renderers
+//
+// All receive screen-space box coords. `bodyL`/`bodyR` are the
+// horizontal extent of the drawn symbol; leads bridge box to body.
 // ---------------------------------------------------------------
 
-/** Shared drawing parameters passed to each gate shape renderer */
-interface GateShapeParams {
+interface ShapeParams {
   ctx: CanvasRenderingContext2D;
   x: number;
   y: number;
   w: number;
   h: number;
   zoom: number;
+  stroke: string;
+  lineWidth: number;
   outputState: boolean;
 }
 
-// ---------------------------------------------------------------
-// Gate shape renderers — polished, professional logic symbols
-// ---------------------------------------------------------------
-
-/** NOT gate: clean triangle + inversion bubble */
-const drawNotGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.15; // padding
-  const triRight = x + w * 0.72;
-
-  // Triangle body with gradient
-  ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.lineTo(triRight, y + h * 0.5);
-  ctx.lineTo(x + inset, y + h - inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-
-  // Stroke with rounded feel
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  // Inversion bubble (clear circle at output)
-  const bubbleR = 5 * zoom;
-  const bubbleCx = triRight + bubbleR + 3 * zoom;
-  const bubbleCy = y + h * 0.5;
-
-  // White fill for clean inversion bubble
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR, 0, Math.PI * 2);
-  ctx.fillStyle = GATE_COLORS.bodyGradientTop;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Small inner circle for inversion indicator
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR * 0.4, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.signalHigh : GATE_COLORS.signalLow;
-  ctx.fill();
-
-  // Signal LED on body
-  drawSignalLed(ctx, x + inset + 8 * zoom, y + h * 0.5, zoom, outputState);
+/** Horizontal extent of the symbol itself, excluding leads and bubble */
+const bodySpan = (x: number, w: number, zoom: number, inverted: boolean) => {
+  const lead = LEAD * zoom;
+  const bubble = inverted ? BUBBLE_R * 2 * zoom : 0;
+  return { bodyL: x + lead, bodyR: x + w - lead - bubble, bubbleR: BUBBLE_R * zoom };
 };
 
-/** AND gate: proper D-shape with flat left, curved right */
-const drawAndGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const curveStart = x + w * 0.35;
+/**
+ * AND family: flat back, rounded nose.
+ *
+ * The nose is elliptical rather than circular. A circle of radius h/2
+ * is wider than the whole body once a gate has more than about three
+ * inputs, which turned tall AND gates into crescents.
+ */
+const andPath = (
+  ctx: CanvasRenderingContext2D,
+  bodyL: number,
+  bodyR: number,
+  y: number,
+  h: number,
+) => {
+  const ry = h / 2;
+  const rx = Math.min(ry, (bodyR - bodyL) * 0.55);
+  const straight = bodyR - rx;
+  const cy = y + ry;
 
-  // D-shape path
   ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.lineTo(curveStart, y + inset);
-  // Right semicircle (convex)
-  ctx.arc(
-    curveStart,
-    y + h * 0.5,
-    h * 0.5 - inset,
-    -Math.PI / 2,
-    Math.PI / 2,
+  ctx.moveTo(bodyL, y);
+  ctx.lineTo(straight, y);
+  ctx.ellipse(straight, cy, rx, ry, 0, -Math.PI / 2, Math.PI / 2);
+  ctx.lineTo(bodyL, y + h);
+  ctx.closePath();
+};
+
+/** OR family: concave back, pointed nose */
+const orPath = (
+  ctx: CanvasRenderingContext2D,
+  bodyL: number,
+  bodyR: number,
+  y: number,
+  h: number,
+) => {
+  const midY = y + h / 2;
+  const backBulge = bodyL + h * 0.34;
+  ctx.beginPath();
+  ctx.moveTo(bodyL, y);
+  // top edge sweeping out to the nose
+  ctx.quadraticCurveTo(bodyL + (bodyR - bodyL) * 0.62, y, bodyR, midY);
+  // bottom edge back to the tail
+  ctx.quadraticCurveTo(bodyL + (bodyR - bodyL) * 0.62, y + h, bodyL, y + h);
+  // concave back
+  ctx.quadraticCurveTo(backBulge, midY, bodyL, y);
+  ctx.closePath();
+};
+
+/** The extra back arc that distinguishes XOR/XNOR from OR/NOR */
+const drawXorArc = (
+  ctx: CanvasRenderingContext2D,
+  bodyL: number,
+  y: number,
+  h: number,
+  zoom: number,
+  stroke: string,
+  lineWidth: number,
+) => {
+  const gap = 5 * zoom;
+  ctx.beginPath();
+  ctx.moveTo(bodyL - gap, y);
+  ctx.quadraticCurveTo(bodyL - gap + h * 0.34, y + h / 2, bodyL - gap, y + h);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+};
+
+/** NOT/BUFFER: triangle pointing right */
+const trianglePath = (
+  ctx: CanvasRenderingContext2D,
+  bodyL: number,
+  bodyR: number,
+  y: number,
+  h: number,
+) => {
+  ctx.beginPath();
+  ctx.moveTo(bodyL, y);
+  ctx.lineTo(bodyR, y + h / 2);
+  ctx.lineTo(bodyL, y + h);
+  ctx.closePath();
+};
+
+const drawLogicShape = (
+  type: 'AND' | 'OR' | 'NAND' | 'NOR' | 'XOR' | 'XNOR' | 'NOT' | 'BUFFER',
+  { ctx, x, y, w, h, zoom, stroke, lineWidth, outputState }: ShapeParams,
+) => {
+  const inverted = type === 'NAND' || type === 'NOR' || type === 'XNOR' || type === 'NOT';
+  const { bodyL, bodyR, bubbleR } = bodySpan(x, w, zoom, inverted);
+  const midY = y + h / 2;
+
+  if (type === 'XOR' || type === 'XNOR') {
+    drawXorArc(ctx, bodyL, y, h, zoom, stroke, lineWidth);
+  }
+
+  switch (type) {
+    case 'AND':
+    case 'NAND':
+      andPath(ctx, bodyL, bodyR, y, h);
+      break;
+    case 'OR':
+    case 'NOR':
+    case 'XOR':
+    case 'XNOR':
+      orPath(ctx, bodyL, bodyR, y, h);
+      break;
+    default:
+      trianglePath(ctx, bodyL, bodyR, y, h);
+  }
+  paintBody(ctx, y, h, stroke, lineWidth);
+
+  if (inverted) {
+    drawBubble(ctx, bodyR + bubbleR, midY, bubbleR, stroke, lineWidth, outputState);
+  }
+
+  // Label only where there is room: AND-family gates have a flat area,
+  // OR-family gates are labelled a bit left of the nose.
+  if (type !== 'NOT' && type !== 'BUFFER') {
+    const isAnd = type === 'AND' || type === 'NAND';
+    const cx = isAnd ? bodyL + (bodyR - bodyL) * 0.4 : bodyL + (bodyR - bodyL) * 0.46;
+    drawLabel(ctx, type, cx, midY, zoom, 10);
+  }
+
+  return { bodyL, bodyR: inverted ? bodyR + bubbleR * 2 : bodyR };
+};
+
+// --- I/O primitives -------------------------------------------
+
+const drawSwitch = ({ ctx, x, y, w, h, zoom, stroke, lineWidth, outputState }: ShapeParams, label?: string) => {
+  const { bodyL, bodyR } = bodySpan(x, w, zoom, false);
+  const bw = bodyR - bodyL;
+
+  ctx.beginPath();
+  ctx.roundRect(bodyL, y, bw, h, 6 * zoom);
+  paintBody(ctx, y, h, outputState ? GATE_COLORS.signalHigh : stroke, lineWidth);
+
+  // Toggle track + knob
+  const pad = 6 * zoom;
+  const trackH = Math.min(h - pad * 2, 14 * zoom);
+  const trackW = Math.min(bw - pad * 2, 26 * zoom);
+  const trackX = bodyL + (bw - trackW) / 2;
+  const trackY = y + (h - trackH) / 2;
+
+  ctx.beginPath();
+  ctx.roundRect(trackX, trackY, trackW, trackH, trackH / 2);
+  ctx.fillStyle = outputState ? 'rgba(61, 220, 151, 0.25)' : 'rgba(0, 0, 0, 0.35)';
+  ctx.fill();
+  ctx.strokeStyle = outputState ? GATE_COLORS.switchOn : GATE_COLORS.switchOff;
+  ctx.lineWidth = Math.max(1, 1.2 * zoom);
+  ctx.stroke();
+
+  const knobR = trackH / 2 - 1.5 * zoom;
+  const knobX = outputState ? trackX + trackW - knobR - 2 * zoom : trackX + knobR + 2 * zoom;
+  ctx.beginPath();
+  ctx.arc(knobX, trackY + trackH / 2, knobR, 0, Math.PI * 2);
+  ctx.fillStyle = outputState ? GATE_COLORS.switchOn : GATE_COLORS.switchOff;
+  ctx.fill();
+
+  if (label && zoom >= 0.6) {
+    drawLabel(ctx, label, bodyL + bw / 2, y - 8 * zoom, zoom, 9, GATE_COLORS.textDim);
+  }
+  return { bodyL, bodyR };
+};
+
+const drawLed = ({ ctx, x, y, w, h, zoom, stroke, lineWidth, outputState }: ShapeParams, label?: string) => {
+  const { bodyL, bodyR } = bodySpan(x, w, zoom, false);
+  const bw = bodyR - bodyL;
+  const cx = bodyL + bw / 2;
+  const cy = y + h / 2;
+
+  ctx.beginPath();
+  ctx.roundRect(bodyL, y, bw, h, 6 * zoom);
+  paintBody(ctx, y, h, outputState ? GATE_COLORS.signalHigh : stroke, lineWidth);
+
+  const r = Math.min(bw, h) * 0.28;
+  if (outputState) {
+    ctx.save();
+    ctx.shadowColor = GATE_COLORS.ledGlow;
+    ctx.shadowBlur = 14 * zoom;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = GATE_COLORS.ledOn;
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = GATE_COLORS.ledOff;
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = outputState ? GATE_COLORS.ledOn : GATE_COLORS.border;
+  ctx.lineWidth = Math.max(1, 1.2 * zoom);
+  ctx.stroke();
+
+  if (label && zoom >= 0.6) {
+    drawLabel(ctx, label, cx, y - 8 * zoom, zoom, 9, GATE_COLORS.textDim);
+  }
+  return { bodyL, bodyR };
+};
+
+const drawConstant = ({ ctx, x, y, w, h, zoom, stroke, lineWidth }: ShapeParams, high: boolean) => {
+  const { bodyL, bodyR } = bodySpan(x, w, zoom, false);
+  const bw = bodyR - bodyL;
+  ctx.beginPath();
+  ctx.roundRect(bodyL, y, bw, h, 5 * zoom);
+  paintBody(ctx, y, h, high ? GATE_COLORS.constantHigh : stroke, lineWidth);
+  drawLabel(
+    ctx,
+    high ? '1' : '0',
+    bodyL + bw / 2,
+    y + h / 2,
+    zoom,
+    14,
+    high ? GATE_COLORS.constantHigh : GATE_COLORS.constantLow,
   );
-  ctx.lineTo(x + inset, y + h - inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  // Label
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${11 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('AND', x + w * 0.22, y + h * 0.5);
-
-  // Signal LED
-  drawSignalLed(ctx, x + w * 0.55, y + h * 0.5, zoom, outputState);
+  return { bodyL, bodyR };
 };
 
-/** OR gate: proper curved shape (concave left, convex right) */
-const drawOrGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const midX = x + w * 0.35;
-
-  // Curved OR shape
+const drawClock = ({ ctx, x, y, w, h, zoom, stroke, lineWidth, outputState }: ShapeParams) => {
+  const { bodyL, bodyR } = bodySpan(x, w, zoom, false);
+  const bw = bodyR - bodyL;
   ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  // Concave left side (curves inward)
-  ctx.quadraticCurveTo(midX, y + h * 0.5, x + inset, y + h - inset);
-  // Bottom edge
-  ctx.quadraticCurveTo(x + w * 0.35, y + h - inset * 2, x + w - inset * 2, y + h * 0.5);
-  // Top edge (mirror)
-  ctx.quadraticCurveTo(x + w * 0.35, y + inset * 2, x + inset, y + inset);
-  ctx.closePath();
+  ctx.roundRect(bodyL, y, bw, h, 5 * zoom);
+  paintBody(ctx, y, h, outputState ? GATE_COLORS.signalHigh : stroke, lineWidth);
 
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
+  // Square-wave glyph
+  const pad = 8 * zoom;
+  const gx = bodyL + pad;
+  const gw = bw - pad * 2;
+  const hi = y + h * 0.32;
+  const lo = y + h * 0.68;
+  ctx.beginPath();
+  ctx.moveTo(gx, lo);
+  ctx.lineTo(gx + gw * 0.25, lo);
+  ctx.lineTo(gx + gw * 0.25, hi);
+  ctx.lineTo(gx + gw * 0.6, hi);
+  ctx.lineTo(gx + gw * 0.6, lo);
+  ctx.lineTo(gx + gw, lo);
+  ctx.strokeStyle = outputState ? GATE_COLORS.signalHigh : GATE_COLORS.clock;
+  ctx.lineWidth = Math.max(1, 1.6 * zoom);
   ctx.lineJoin = 'round';
   ctx.stroke();
-
-  // Label
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${11 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('OR', x + w * 0.42, y + h * 0.5);
-
-  // Signal LED
-  drawSignalLed(ctx, x + w * 0.65, y + h * 0.5, zoom, outputState);
+  return { bodyL, bodyR };
 };
 
-/** NAND gate: AND shape + inversion bubble */
-const drawNandGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const curveStart = x + w * 0.32;
-
-  ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.lineTo(curveStart, y + inset);
-  ctx.arc(curveStart, y + h * 0.5, h * 0.5 - inset, -Math.PI / 2, Math.PI / 2);
-  ctx.lineTo(x + inset, y + h - inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  // Inversion bubble at output tip
-  const bubbleR = 4.5 * zoom;
-  const bubbleCx = x + w * 0.32 + (h * 0.5 - inset) + bubbleR + 3 * zoom;
-  const bubbleCy = y + h * 0.5;
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR, 0, Math.PI * 2);
-  ctx.fillStyle = GATE_COLORS.bodyGradientTop;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR * 0.4, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.signalHigh : GATE_COLORS.signalLow;
-  ctx.fill();
-
-  // Label
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${10 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('NAND', x + w * 0.2, y + h * 0.5);
-
-  drawSignalLed(ctx, x + w * 0.5, y + h * 0.5, zoom, outputState);
-};
-
-/** NOR gate: OR shape + inversion bubble */
-const drawNorGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const midX = x + w * 0.35;
-
-  ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.quadraticCurveTo(midX, y + h * 0.5, x + inset, y + h - inset);
-  ctx.quadraticCurveTo(x + w * 0.35, y + h - inset * 2, x + w * 0.8, y + h * 0.5);
-  ctx.quadraticCurveTo(x + w * 0.35, y + inset * 2, x + inset, y + inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  // Inversion bubble
-  const bubbleR = 4.5 * zoom;
-  const bubbleCx = x + w * 0.8 + bubbleR + 2 * zoom;
-  const bubbleCy = y + h * 0.5;
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR, 0, Math.PI * 2);
-  ctx.fillStyle = GATE_COLORS.bodyGradientTop;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR * 0.4, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.signalHigh : GATE_COLORS.signalLow;
-  ctx.fill();
-
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${10 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('NOR', x + w * 0.35, y + h * 0.5);
-
-  drawSignalLed(ctx, x + w * 0.55, y + h * 0.5, zoom, outputState);
-};
-
-/** XOR gate: OR shape with extra input curve */
-const drawXorGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const midX = x + w * 0.35;
-
-  // Extra curved line on left (XOR indicator)
-  ctx.beginPath();
-  ctx.moveTo(x + inset - 4 * zoom, y + inset);
-  ctx.quadraticCurveTo(midX - 4 * zoom, y + h * 0.5, x + inset - 4 * zoom, y + h - inset);
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Main OR shape
-  ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.quadraticCurveTo(midX, y + h * 0.5, x + inset, y + h - inset);
-  ctx.quadraticCurveTo(x + w * 0.35, y + h - inset * 2, x + w - inset * 2, y + h * 0.5);
-  ctx.quadraticCurveTo(x + w * 0.35, y + inset * 2, x + inset, y + inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${11 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('XOR', x + w * 0.42, y + h * 0.5);
-
-  drawSignalLed(ctx, x + w * 0.65, y + h * 0.5, zoom, outputState);
-};
-
-/** XNOR gate: XOR shape + inversion bubble */
-const drawXnorGate = ({ ctx, x, y, w, h, zoom, outputState }: GateShapeParams) => {
-  const inset = w * 0.05;
-  const midX = x + w * 0.35;
-
-  // Extra curved line on left (XOR indicator)
-  ctx.beginPath();
-  ctx.moveTo(x + inset - 4 * zoom, y + inset);
-  ctx.quadraticCurveTo(midX - 4 * zoom, y + h * 0.5, x + inset - 4 * zoom, y + h - inset);
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Main OR shape
-  ctx.beginPath();
-  ctx.moveTo(x + inset, y + inset);
-  ctx.quadraticCurveTo(midX, y + h * 0.5, x + inset, y + h - inset);
-  ctx.quadraticCurveTo(x + w * 0.35, y + h - inset * 2, x + w * 0.8, y + h * 0.5);
-  ctx.quadraticCurveTo(x + w * 0.35, y + inset * 2, x + inset, y + inset);
-  ctx.closePath();
-
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-
-  // Inversion bubble
-  const bubbleR = 4.5 * zoom;
-  const bubbleCx = x + w * 0.8 + bubbleR + 2 * zoom;
-  const bubbleCy = y + h * 0.5;
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR, 0, Math.PI * 2);
-  ctx.fillStyle = GATE_COLORS.bodyGradientTop;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(bubbleCx, bubbleCy, bubbleR * 0.4, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.signalHigh : GATE_COLORS.signalLow;
-  ctx.fill();
-
-  ctx.fillStyle = GATE_COLORS.text;
-  ctx.font = `bold ${10 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('XNOR', x + w * 0.35, y + h * 0.5);
-
-  drawSignalLed(ctx, x + w * 0.55, y + h * 0.5, zoom, outputState);
-};
-
-// ---------------------------------------------------------------
-// I/O Component shape renderers
-// ---------------------------------------------------------------
-
-/** INPUT gate: toggle switch visual with ON/OFF label and color */
-const drawInputGate = (
-  { ctx, x, y, w, h, zoom }: GateShapeParams,
-  outputState: boolean,
+/** Rectangular symbol used by flip-flops, latches and custom blocks */
+const drawBoxSymbol = (
+  { ctx, x, y, w, h, zoom, stroke, lineWidth }: ShapeParams,
+  config: GateConfig,
+  title: string,
+  clockPortIndex?: number,
 ) => {
-  // Body with gradient
+  const { bodyL, bodyR } = bodySpan(x, w, zoom, false);
+  const bw = bodyR - bodyL;
+
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 8 * zoom);
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  ctx.roundRect(bodyL, y, bw, h, 5 * zoom);
+  paintBody(ctx, y, h, stroke, lineWidth);
 
-  // Switch track background
-  const trackWidth = w * 0.6;
-  const trackHeight = h * 0.28;
-  const trackX = x + (w - trackWidth) / 2;
-  const trackY = y + h * 0.28;
+  drawLabel(ctx, title, bodyL + bw / 2, y + 11 * zoom, zoom, 9, GATE_COLORS.textDim);
 
-  ctx.fillStyle = outputState ? GATE_COLORS.switchOn : GATE_COLORS.switchOff;
-  ctx.globalAlpha = 0.25;
-  ctx.beginPath();
-  ctx.roundRect(trackX, trackY, trackWidth, trackHeight, trackHeight / 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
+  // Port names inside the box
+  config.inputs.forEach((p, i) => {
+    const py = y + p.offset.y * zoom;
+    if (i === clockPortIndex) {
+      // Standard clock-input wedge
+      const s = 5 * zoom;
+      ctx.beginPath();
+      ctx.moveTo(bodyL, py - s);
+      ctx.lineTo(bodyL + s * 1.4, py);
+      ctx.lineTo(bodyL, py + s);
+      ctx.strokeStyle = GATE_COLORS.textDim;
+      ctx.lineWidth = Math.max(1, 1.2 * zoom);
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    } else {
+      drawPortLabel(ctx, p.name, bodyL + 5 * zoom, py, zoom, 'left');
+    }
+  });
+  config.outputs.forEach((p) => {
+    drawPortLabel(ctx, p.name, bodyR - 5 * zoom, y + p.offset.y * zoom, zoom, 'right');
+  });
 
-  // Switch thumb
-  const thumbRadius = trackHeight * 0.42;
-  const thumbCx = outputState
-    ? trackX + trackWidth - thumbRadius - 2 * zoom
-    : trackX + thumbRadius + 2 * zoom;
-  const thumbCy = trackY + trackHeight / 2;
-
-  // Thumb shadow
-  ctx.beginPath();
-  ctx.arc(thumbCx, thumbCy + 1 * zoom, thumbRadius, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fill();
-
-  // Thumb
-  ctx.beginPath();
-  ctx.arc(thumbCx, thumbCy, thumbRadius, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.switchOn : GATE_COLORS.switchOff;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.portRing;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Thumb highlight
-  ctx.beginPath();
-  ctx.arc(thumbCx - thumbRadius * 0.2, thumbCy - thumbRadius * 0.25, thumbRadius * 0.3, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fill();
-
-  // ON/OFF label below switch
-  ctx.fillStyle = outputState ? GATE_COLORS.switchOn : GATE_COLORS.switchOff;
-  ctx.font = `bold ${9 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(outputState ? 'ON' : 'OFF', x + w / 2, y + h * 0.85);
-
-  // IN label above switch
-  ctx.fillStyle = GATE_COLORS.textDim;
-  ctx.font = `${8 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.fillText('IN', x + w / 2, y + h * 0.15);
-};
-
-/** OUTPUT / LED gate: displays signal state with glow effect */
-const drawOutputGate = (
-  { ctx, x, y, w, h, zoom }: GateShapeParams,
-  outputState: boolean,
-) => {
-  // Body with gradient
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 8 * zoom);
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // LED circle
-  const ledRadius = Math.min(w, h) * 0.22;
-  const ledCx = x + w / 2;
-  const ledCy = y + h * 0.42;
-
-  // Glow effect when on
-  if (outputState) {
-    const glowRadius = ledRadius * 2.5;
-    const glow = ctx.createRadialGradient(ledCx, ledCy, ledRadius * 0.5, ledCx, ledCy, glowRadius);
-    glow.addColorStop(0, GATE_COLORS.ledGlow);
-    glow.addColorStop(1, 'transparent');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(ledCx, ledCy, glowRadius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // LED circle
-  ctx.beginPath();
-  ctx.arc(ledCx, ledCy, ledRadius, 0, Math.PI * 2);
-  ctx.fillStyle = outputState ? GATE_COLORS.ledOn : GATE_COLORS.ledOff;
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.portRing;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Inner highlight when on
-  if (outputState) {
-    ctx.beginPath();
-    ctx.arc(ledCx - ledRadius * 0.2, ledCy - ledRadius * 0.2, ledRadius * 0.35, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.fill();
-  }
-
-  // OUT label below LED
-  ctx.fillStyle = GATE_COLORS.textDim;
-  ctx.font = `${8 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('OUT', x + w / 2, y + h * 0.85);
-};
-
-/** CONSTANT_HIGH gate: always outputs 1, shows fixed "1" label */
-const drawConstantHighGate = ({ ctx, x, y, w, h, zoom }: GateShapeParams) => {
-  // Body with gradient
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 8 * zoom);
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Value indicator: green background tint
-  ctx.fillStyle = GATE_COLORS.constantHigh;
-  ctx.globalAlpha = 0.1;
-  ctx.beginPath();
-  ctx.roundRect(x + 3 * zoom, y + 3 * zoom, w - 6 * zoom, h - 6 * zoom, 5 * zoom);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // "1" label
-  ctx.fillStyle = GATE_COLORS.constantHigh;
-  ctx.font = `bold ${18 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('1', x + w / 2, y + h * 0.42);
-
-  // Small label
-  ctx.fillStyle = GATE_COLORS.textDim;
-  ctx.font = `${7 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.fillText('HIGH', x + w / 2, y + h * 0.82);
-};
-
-/** CONSTANT_LOW gate: always outputs 0, shows fixed "0" label */
-const drawConstantLowGate = ({ ctx, x, y, w, h, zoom }: GateShapeParams) => {
-  // Body with gradient
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 8 * zoom);
-  ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-  ctx.fill();
-  ctx.strokeStyle = GATE_COLORS.border;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Value indicator: red background tint
-  ctx.fillStyle = GATE_COLORS.constantLow;
-  ctx.globalAlpha = 0.1;
-  ctx.beginPath();
-  ctx.roundRect(x + 3 * zoom, y + 3 * zoom, w - 6 * zoom, h - 6 * zoom, 5 * zoom);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // "0" label
-  ctx.fillStyle = GATE_COLORS.constantLow;
-  ctx.font = `bold ${18 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('0', x + w / 2, y + h * 0.42);
-
-  // Small label
-  ctx.fillStyle = GATE_COLORS.textDim;
-  ctx.font = `${7 * zoom}px "Segoe UI", system-ui, sans-serif`;
-  ctx.fillText('LOW', x + w / 2, y + h * 0.82);
+  return { bodyL, bodyR };
 };
 
 // ---------------------------------------------------------------
-// Main gate drawing function
+// Public entry point
 // ---------------------------------------------------------------
 
 export interface DrawGateParams {
@@ -925,11 +592,12 @@ export interface DrawGateParams {
   selected: boolean;
   hovered: boolean;
   inputStates: boolean[];
-  /** Per-port draw states for connection mode highlights */
   portStates?: { inputs?: PortDrawState[]; outputs?: PortDrawState[] };
+  /** Title override, used for custom block instances */
+  title?: string;
 }
 
-/** Draw a gate with its type-specific symbol, border, label, and ports */
+/** Draw one gate: symbol, leads, ports. */
 export const drawGateSymbol = ({
   ctx,
   gate,
@@ -939,95 +607,116 @@ export const drawGateSymbol = ({
   hovered,
   inputStates,
   portStates,
+  title,
 }: DrawGateParams) => {
-  const x = gate.position.x * vp.zoom + vp.offsetX;
-  const y = gate.position.y * vp.zoom + vp.offsetY;
-  const w = config.width * vp.zoom;
-  const h = config.height * vp.zoom;
+  const { zoom } = vp;
+  const x = gate.position.x * zoom + vp.offsetX;
+  const y = gate.position.y * zoom + vp.offsetY;
+  const w = config.width * zoom;
+  const h = config.height * zoom;
 
-  // --- Layer 1: Background effects (selection/hover glow) ---
-  if (selected) {
-    drawSelectionGlow(ctx, x, y, w, h, vp.zoom);
-  } else if (hovered) {
-    drawHoverGlow(ctx, x, y, w, h, vp.zoom);
+  const stroke = selected
+    ? GATE_COLORS.borderSelected
+    : hovered
+      ? GATE_COLORS.borderHover
+      : GATE_COLORS.border;
+  const lineWidth = selected ? 2.2 : hovered ? 1.9 : 1.4;
+
+  // Selection / hover halo behind the symbol
+  if (selected || hovered) {
+    ctx.save();
+    ctx.shadowColor = selected ? GATE_COLORS.selectionGlow : GATE_COLORS.hoverGlow;
+    ctx.shadowBlur = (selected ? 16 : 11) * zoom;
+    ctx.beginPath();
+    ctx.roundRect(x + LEAD * zoom, y, w - LEAD * 2 * zoom, h, 7 * zoom);
+    ctx.fillStyle = selected ? 'rgba(255,180,84,0.10)' : 'rgba(88,182,255,0.07)';
+    ctx.fill();
+    ctx.restore();
   }
 
-  // --- Layer 2: Drop shadow ---
-  drawDropShadow(ctx, x, y, w, h, vp.zoom);
-
-  // --- Layer 3: Border style ---
-  if (selected) {
-    ctx.strokeStyle = GATE_COLORS.borderSelected;
-    ctx.lineWidth = 2.5;
-  } else if (hovered) {
-    ctx.strokeStyle = GATE_COLORS.borderHover;
-    ctx.lineWidth = 2;
-  } else {
-    ctx.strokeStyle = GATE_COLORS.border;
-    ctx.lineWidth = 1.5;
-  }
-
-  const shapeParams: GateShapeParams = {
-    ctx, x, y, w, h,
-    zoom: vp.zoom,
+  const params: ShapeParams = {
+    ctx,
+    x,
+    y,
+    w,
+    h,
+    zoom,
+    stroke,
+    lineWidth,
     outputState: gate.outputState,
   };
 
-  // --- Layer 4: Draw the gate shape based on type ---
+  const outStates = gate.outputStates ?? [gate.outputState];
+  let span: { bodyL: number; bodyR: number };
+
   switch (gate.type) {
-    case 'NOT':
-      drawNotGate(shapeParams);
-      break;
     case 'AND':
-      drawAndGate(shapeParams);
-      break;
     case 'OR':
-      drawOrGate(shapeParams);
-      break;
+    case 'NOT':
     case 'NAND':
-      drawNandGate(shapeParams);
-      break;
     case 'NOR':
-      drawNorGate(shapeParams);
-      break;
     case 'XOR':
-      drawXorGate(shapeParams);
-      break;
     case 'XNOR':
-      drawXnorGate(shapeParams);
+    case 'BUFFER':
+      span = drawLogicShape(gate.type, params);
       break;
     case 'INPUT':
-      drawInputGate(shapeParams, gate.outputState);
+      span = drawSwitch(params, gate.label);
       break;
     case 'OUTPUT':
-      drawOutputGate(shapeParams, gate.outputState);
+      span = drawLed(params, gate.label);
       break;
     case 'CONSTANT_HIGH':
-      drawConstantHighGate(shapeParams);
+      span = drawConstant(params, true);
       break;
     case 'CONSTANT_LOW':
-      drawConstantLowGate(shapeParams);
+      span = drawConstant(params, false);
       break;
-    default: {
-      // Generic rounded rectangle for other types
-      ctx.beginPath();
-      ctx.roundRect(x, y, w, h, 8 * vp.zoom);
-      ctx.fillStyle = createBodyGradient(ctx, x, y, h);
-      ctx.fill();
-      ctx.strokeStyle = GATE_COLORS.border;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Label
-      ctx.fillStyle = GATE_COLORS.text;
-      ctx.font = `bold ${13 * vp.zoom}px "Segoe UI", system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(config.label, x + w / 2, y + h / 2);
+    case 'CLOCK':
+      span = drawClock(params);
       break;
-    }
+    case 'D_FLIPFLOP':
+    case 'T_FLIPFLOP':
+      span = drawBoxSymbol(params, config, config.label, 1);
+      break;
+    case 'SR_LATCH':
+      span = drawBoxSymbol(params, config, config.label);
+      break;
+    default:
+      span = drawBoxSymbol(params, config, title ?? config.label);
   }
 
-  // --- Layer 5: Draw ports on top ---
-  drawPorts(ctx, gate, config, vp, inputStates, portStates);
+  // Leads from the box edge to the symbol
+  config.inputs.forEach((port, i) => {
+    const py = y + port.offset.y * zoom;
+    drawLead(ctx, x, span.bodyL, py, zoom, inputStates[i] ?? false);
+  });
+  config.outputs.forEach((port, i) => {
+    const py = y + port.offset.y * zoom;
+    drawLead(ctx, span.bodyR, x + w, py, zoom, outStates[i] ?? false);
+  });
+
+  // Ports last, so they sit on top of everything
+  config.inputs.forEach((port, i) => {
+    drawPort(
+      ctx,
+      x + port.offset.x * zoom,
+      y + port.offset.y * zoom,
+      zoom,
+      inputStates[i] ?? false,
+      true,
+      portStates?.inputs?.[i],
+    );
+  });
+  config.outputs.forEach((port, i) => {
+    drawPort(
+      ctx,
+      x + port.offset.x * zoom,
+      y + port.offset.y * zoom,
+      zoom,
+      outStates[i] ?? false,
+      false,
+      portStates?.outputs?.[i],
+    );
+  });
 };

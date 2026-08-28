@@ -9,7 +9,14 @@ import type {
   Position,
   SimulationSpeed,
 } from '@/types/circuit';
-import { getGateConfig } from '@/utils/gateConfigs';
+import { MAX_FAN_IN, MIN_FAN_IN } from '@/types/circuit';
+import {
+  GATE_DESCRIPTIONS,
+  clampFanIn,
+  getConfigForGate,
+  getGateConfig,
+  supportsVariableArity,
+} from '@/utils/gateConfigs';
 import {
   drawGateSymbol,
   getPortWorldPosition,
@@ -58,19 +65,23 @@ import type { AlignmentGuide } from '@/utils/alignmentUtils';
 // Color palette
 // ---------------------------------------------------------------
 const COLORS = {
-  background: '#1a1a2e',
-  grid: '#252545',
-  gridMajor: '#2e2e5a',
-  viewportInfo: '#8888aa',
-  marqueeFill: 'rgba(83, 168, 182, 0.08)',
-  marqueeStroke: '#53a8b6',
-  blockBody: '#1a2744',
-  blockBorder: '#2a5a8a',
-  blockBorderSelected: '#e94560',
-  blockBorderHover: '#53a8b6',
-  blockText: '#c8d8e8',
-  blockIcon: '#7ec8e3',
+  background: '#0b1020',
+  grid: '#151d33',
+  gridMajor: '#1f2b47',
+  viewportInfo: '#8b9ac0',
+  marqueeFill: 'rgba(88, 182, 255, 0.08)',
+  marqueeStroke: '#58b6ff',
+  blockBody: '#1f2b47',
+  blockBorder: '#3a4d75',
+  blockBorderSelected: '#ffb454',
+  blockBorderHover: '#58b6ff',
+  blockText: '#e6ecf7',
+  blockIcon: '#58b6ff',
 };
+
+/** World-space spacing of the fine grid; matches the snap increment */
+const GRID_MINOR = 20;
+const GRID_MAJOR_EVERY = 5;
 
 // ---------------------------------------------------------------
 // Grid drawing
@@ -82,40 +93,60 @@ const drawGrid = (
   h: number,
   vp: Viewport,
 ) => {
-  const step = 40 * vp.zoom;
-  const startX = vp.offsetX % step;
-  const startY = vp.offsetY % step;
+  const minor = GRID_MINOR * vp.zoom;
+  const major = minor * GRID_MAJOR_EVERY;
 
-  // minor grid
-  ctx.strokeStyle = COLORS.grid;
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  for (let x = startX; x < w; x += step) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-  }
-  for (let y = startY; y < h; y += step) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-  }
-  ctx.stroke();
+  // A line every few screen pixels is just noise — drop the fine grid
+  // once it gets dense, and the whole grid once even that is too tight.
+  if (major < 8) return;
 
-  // major grid
-  const majorStep = step * 5;
-  const majorStartX = vp.offsetX % majorStep;
-  const majorStartY = vp.offsetY % majorStep;
+  /** First on-screen line at or before 0 for a given spacing */
+  const firstLine = (offset: number, spacing: number) =>
+    offset - Math.ceil(offset / spacing) * spacing;
+
+  if (minor >= 6) {
+    ctx.strokeStyle = COLORS.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = firstLine(vp.offsetX, minor); x < w; x += minor) {
+      const px = Math.round(x) + 0.5;
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, h);
+    }
+    for (let y = firstLine(vp.offsetY, minor); y < h; y += minor) {
+      const py = Math.round(y) + 0.5;
+      ctx.moveTo(0, py);
+      ctx.lineTo(w, py);
+    }
+    ctx.stroke();
+  }
+
   ctx.strokeStyle = COLORS.gridMajor;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = majorStartX; x < w; x += majorStep) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
+  for (let x = firstLine(vp.offsetX, major); x < w; x += major) {
+    const px = Math.round(x) + 0.5;
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, h);
   }
-  for (let y = majorStartY; y < h; y += majorStep) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
+  for (let y = firstLine(vp.offsetY, major); y < h; y += major) {
+    const py = Math.round(y) + 0.5;
+    ctx.moveTo(0, py);
+    ctx.lineTo(w, py);
   }
   ctx.stroke();
+
+  // World origin, so it is obvious where (0,0) is when you pan away
+  if (vp.offsetX > -40 && vp.offsetX < w + 40 && vp.offsetY > -40 && vp.offsetY < h + 40) {
+    ctx.strokeStyle = 'rgba(88, 182, 255, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(vp.offsetX - 8, vp.offsetY);
+    ctx.lineTo(vp.offsetX + 8, vp.offsetY);
+    ctx.moveTo(vp.offsetX, vp.offsetY - 8);
+    ctx.lineTo(vp.offsetX, vp.offsetY + 8);
+    ctx.stroke();
+  }
 };
 
 // ---------------------------------------------------------------
@@ -344,19 +375,6 @@ type ContextMenuTarget =
 // Gate descriptions for hover tooltips
 // ---------------------------------------------------------------
 
-const GATE_TOOLTIPS: Record<GateType, string> = {
-  INPUT: 'User-toggleable input switch',
-  OUTPUT: 'LED output indicator',
-  CONSTANT_HIGH: 'Fixed HIGH (1) signal',
-  CONSTANT_LOW: 'Fixed LOW (0) signal',
-  AND: 'Outputs HIGH when all inputs HIGH',
-  OR: 'Outputs HIGH when any input HIGH',
-  NOT: 'Inverts the input signal',
-  NAND: 'AND + NOT (inverted AND)',
-  NOR: 'OR + NOT (inverted OR)',
-  XOR: 'Outputs HIGH when inputs differ',
-  XNOR: 'XOR + NOT (equality gate)',
-};
 
 // ---------------------------------------------------------------
 // Component
@@ -588,7 +606,7 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
           return getBlockGateConfig(blockDef);
         }
       }
-      return getGateConfig(gate.type);
+      return getConfigForGate(gate);
     },
     [],
   );
@@ -629,13 +647,41 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
   );
 
   // Resize canvas
-  const resize = useCallback(() => {
+  /**
+   * Size the backing store to the device's real pixel density.
+   * Without this the canvas is stretched by the browser on every
+   * HiDPI screen, which is what made gates and text look soft.
+   * Returns the size in CSS pixels — the units everything else uses.
+   */
+  const resize = useCallback((): { width: number; height: number; dpr: number } => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const parent = canvas.parentElement;
-    if (!parent) return;
-    canvas.width = parent.clientWidth;
-    canvas.height = parent.clientHeight;
+    const parent = canvas?.parentElement;
+    if (!canvas || !parent) return { width: 0, height: 0, dpr: 1 };
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const width = parent.clientWidth;
+    const height = parent.clientHeight;
+
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    return { width, height, dpr };
+  }, []);
+
+  /** Canvas size in CSS pixels */
+  const canvasSize = useCallback((): { width: number; height: number } => {
+    const canvas = canvasRef.current;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    return {
+      width: (canvas?.width ?? 0) / dpr,
+      height: (canvas?.height ?? 0) / dpr,
+    };
   }, []);
 
   // Helper: get the set of gate IDs that should appear "selected"
@@ -702,9 +748,10 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    resize();
+    const { width: w, height: h, dpr } = resize();
 
-    const { width: w, height: h } = canvas;
+    // Draw in CSS pixels; the transform maps them onto device pixels.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // clear
     ctx.fillStyle = COLORS.background;
@@ -1042,8 +1089,9 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
         e.preventDefault();
         const canvas = canvasRef.current;
         if (canvas) {
-          const centerX = canvas.width / 2;
-          const centerY = canvas.height / 2;
+          const { width: cw, height: ch } = canvasSize();
+          const centerX = cw / 2;
+          const centerY = ch / 2;
           const worldCenter = screenToWorld(centerX, centerY);
           const newCircuit = clipboard.paste(circuit, worldCenter);
           if (newCircuit && onCircuitChange) {
@@ -1131,7 +1179,7 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [circuit, onCircuitChange, selection, clipboard, screenToWorld, contextMenu.visible, placementActive, onCancelPlacement, requestDeleteSelected, deleteConfirm]);
+  }, [circuit, onCircuitChange, selection, clipboard, screenToWorld, contextMenu.visible, placementActive, onCancelPlacement, requestDeleteSelected, deleteConfirm, canvasSize]);
 
   // Set copy cursor while placement mode is active
   useEffect(() => {
@@ -1893,6 +1941,47 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
   if (menuTarget.type === 'gate') {
     const targetGate = circuit.gates.find((g) => g.id === menuTarget.gateId);
     const isBlock = targetGate ? isBlockInstance(targetGate) : false;
+
+    /**
+     * Change how many inputs a gate has. Wires landing on ports that no
+     * longer exist are removed, otherwise they would dangle invisibly.
+     */
+    const setFanIn = (delta: number) => {
+      if (!targetGate || !onCircuitChange) return;
+      const current = clampFanIn(targetGate.type, targetGate.inputCount);
+      const next = clampFanIn(targetGate.type, current + delta);
+      if (next === current) return;
+
+      onCircuitChange({
+        ...circuit,
+        gates: circuit.gates.map((g) =>
+          g.id === targetGate.id ? { ...g, inputCount: next } : g,
+        ),
+        wires: circuit.wires.filter(
+          (w) => !(w.toGateId === targetGate.id && w.toPortIndex >= next),
+        ),
+      });
+      showToast(`${targetGate.type}: ${next} inputs`);
+    };
+
+    const arity = targetGate ? clampFanIn(targetGate.type, targetGate.inputCount) : 0;
+    const variable = targetGate ? supportsVariableArity(targetGate.type) : false;
+
+    const arityItems: ContextMenuItem[] = variable
+      ? [
+          {
+            label: `Add input (${arity} → ${Math.min(arity + 1, MAX_FAN_IN)})`,
+            separator: true,
+            disabled: arity >= MAX_FAN_IN,
+            onClick: () => setFanIn(1),
+          },
+          {
+            label: `Remove input (${arity} → ${Math.max(arity - 1, MIN_FAN_IN)})`,
+            disabled: arity <= MIN_FAN_IN,
+            onClick: () => setFanIn(-1),
+          },
+        ]
+      : [];
     menuItems = [
       {
         label: 'Copy',
@@ -1929,6 +2018,7 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
             },
           ]
         : []),
+      ...arityItems,
       {
         label: 'Create Block...',
         disabled: selCount === 0 || !onCreateBlockRequest,
@@ -2165,7 +2255,7 @@ export const CanvasEditor: React.FC<CanvasEditorProps> = ({
           const title = blockDef ? `${blockDef.icon} ${blockDef.name}` : gConfig.label;
           const desc = blockDef
             ? blockDef.description || 'Custom block'
-            : GATE_TOOLTIPS[gate.type];
+            : GATE_DESCRIPTIONS[gate.type];
           const hint = isBlock
             ? 'Double-click to edit internals'
             : gate.type === 'INPUT'

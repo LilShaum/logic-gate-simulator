@@ -10,21 +10,21 @@ import { getGateConfig } from '@/utils/gateConfigs';
 // Color palette
 // ---------------------------------------------------------------
 const WIRE_COLORS = {
-  signalHigh: '#00ff88',
-  signalLow: '#4a4a6a',
-  selected: '#e94560',
-  hover: '#53a8b6',
-  preview: '#53a8b6',
-  snapGlow: 'rgba(83, 168, 182, 0.6)',
+  signalHigh: '#3ddc97',
+  signalLow: '#4a5872',
+  selected: '#ffb454',
+  hover: '#58b6ff',
+  preview: '#58b6ff',
+  snapGlow: 'rgba(88, 182, 255, 0.6)',
 };
 
 // Glow colors (used as shadow and translucent overlays)
 const GLOW_COLORS = {
-  signalHigh: 'rgba(0, 255, 136, 0.20)',
-  signalHighStrong: 'rgba(0, 255, 136, 0.35)',
-  signalLow: 'rgba(74, 74, 106, 0.12)',
-  selected: 'rgba(233, 69, 96, 0.25)',
-  hover: 'rgba(83, 168, 182, 0.18)',
+  signalHigh: 'rgba(61, 220, 151, 0.22)',
+  signalHighStrong: 'rgba(61, 220, 151, 0.38)',
+  signalLow: 'rgba(74, 88, 114, 0.12)',
+  selected: 'rgba(255, 180, 84, 0.28)',
+  hover: 'rgba(88, 182, 255, 0.20)',
 };
 
 // ---------------------------------------------------------------
@@ -89,8 +89,11 @@ const getPointAtT = (
   const n = segments.length;
   if (n === 0) return { x: 0, y: 0 };
 
-  const scaled = t * n;
-  const idx = Math.min(Math.floor(scaled), n - 1);
+  // t is normalised defensively: a negative or >1 value here would
+  // index outside the segment array and take the whole canvas down.
+  const clamped = Math.min(Math.max(t, 0), 1);
+  const scaled = clamped * n;
+  const idx = Math.min(Math.max(Math.floor(scaled), 0), n - 1);
   const localT = scaled - idx;
   const seg = segments[idx];
 
@@ -140,7 +143,8 @@ const drawSignalFlowDots = (
   const dotSpacing = 1 / SIGNAL_DOT_COUNT;
 
   for (let i = 0; i < SIGNAL_DOT_COUNT; i++) {
-    const baseT = (i * dotSpacing + time * speedFactor * 0.001) % 1;
+    const raw = (i * dotSpacing + time * speedFactor * 0.001) % 1;
+    const baseT = raw < 0 ? raw + 1 : raw;
     const pos = getPointAtT(segments, baseT);
 
     // Bright core
@@ -153,7 +157,7 @@ const drawSignalFlowDots = (
     // Glow halo
     const glowR = radius * 3;
     const glow = ctx.createRadialGradient(pos.x, pos.y, radius * 0.5, pos.x, pos.y, glowR);
-    glow.addColorStop(0, 'rgba(0, 255, 136, 0.4)');
+    glow.addColorStop(0, 'rgba(61, 220, 151, 0.42)');
     glow.addColorStop(1, 'transparent');
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, glowR, 0, Math.PI * 2);
@@ -289,30 +293,39 @@ export const detectWireJunctions = (
   allWires: Wire[],
   gates: Gate[],
   vp: Viewport,
-): { x: number; y: number }[] => {
+): { x: number; y: number; signal: boolean }[] => {
   // Collect all segments with their wire IDs
-  const allSegs: Array<{ seg: { x1: number; y1: number; x2: number; y2: number }; wireIdx: number }> = [];
+  const allSegs: Array<{
+    seg: { x1: number; y1: number; x2: number; y2: number };
+    wireIdx: number;
+    net: string;
+    signal: boolean;
+  }> = [];
   allWires.forEach((wire, wi) => {
     const pts = getWireScreenPoints(wire, gates, vp);
     if (pts.length < 2) return;
-    const segs = getWireSegments(pts);
-    for (const seg of segs) {
-      allSegs.push({ seg, wireIdx: wi });
+    const net = `${wire.fromGateId}:${wire.fromPortIndex}`;
+    for (const seg of getWireSegments(pts)) {
+      allSegs.push({ seg, wireIdx: wi, net, signal: wire.signal });
     }
   });
 
-  const junctions: { x: number; y: number }[] = [];
+  const junctions: { x: number; y: number; signal: boolean }[] = [];
   // Only compare segments from different wires
   for (let i = 0; i < allSegs.length; i++) {
     for (let j = i + 1; j < allSegs.length; j++) {
       if (allSegs[i].wireIdx === allSegs[j].wireIdx) continue;
+      // Only wires on the same net are electrically joined. Crossings
+      // between different nets are left unmarked, which is exactly how
+      // a schematic says "these two do not connect".
+      if (allSegs[i].net !== allSegs[j].net) continue;
       const pt = segmentIntersection(allSegs[i].seg, allSegs[j].seg);
       if (pt) {
         // Deduplicate nearby junctions
         const isDupe = junctions.some(
           (j) => Math.abs(j.x - pt.x) < 4 && Math.abs(j.y - pt.y) < 4,
         );
-        if (!isDupe) junctions.push(pt);
+        if (!isDupe) junctions.push({ ...pt, signal: allSegs[i].signal });
       }
     }
   }
@@ -322,35 +335,19 @@ export const detectWireJunctions = (
 /** Draw small bridge/hop arcs at wire junction crossings */
 export const drawWireJunctions = (
   ctx: CanvasRenderingContext2D,
-  junctions: { x: number; y: number }[],
+  junctions: { x: number; y: number; signal: boolean }[],
   zoom: number,
 ) => {
   if (junctions.length === 0) return;
 
-  const bridgeR = 5 * zoom;
+  const r = Math.max(2, 3.2 * zoom);
   ctx.save();
-
   for (const j of junctions) {
-    // Draw a small semi-circle bridge (hop) — background circle
     ctx.beginPath();
-    ctx.arc(j.x, j.y, bridgeR + 1.5 * zoom, 0, Math.PI * 2);
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fill();
-
-    // Draw the bridge arc (top half)
-    ctx.beginPath();
-    ctx.arc(j.x, j.y, bridgeR, Math.PI, 0);
-    ctx.strokeStyle = 'rgba(136, 136, 170, 0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Small dot at crossing
-    ctx.beginPath();
-    ctx.arc(j.x, j.y, 1.5 * zoom, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(136, 136, 170, 0.35)';
+    ctx.arc(j.x, j.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = j.signal ? WIRE_COLORS.signalHigh : WIRE_COLORS.signalLow;
     ctx.fill();
   }
-
   ctx.restore();
 };
 

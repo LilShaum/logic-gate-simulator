@@ -1,6 +1,72 @@
 /* ============================================================
-   Global styles for UI polish — transitions, animations, tooltips
+   Global styles — design tokens, chrome polish, animations
    ============================================================ */
+
+:root {
+  --bg: #0b1020;
+  --panel: rgba(18, 26, 45, 0.92);
+  --panel-solid: #121a2d;
+  --panel-border: #2a3a5c;
+  --divider: #1e2942;
+
+  --text: #e6ecf7;
+  --text-dim: #8b9ac0;
+  --text-faint: #5d6a8a;
+
+  --accent: #58b6ff;
+  --high: #3ddc97;
+  --warn: #ffb454;
+  --danger: #ff6b6b;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  /* The canvas is the interaction surface; stop the page itself
+     from rubber-banding when a drag runs past the edge. */
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+}
+
+::selection {
+  background: rgba(88, 182, 255, 0.3);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Respect users who ask for less motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 /* Smooth transitions for all UI elements */
 * {
@@ -66,8 +132,8 @@ button:disabled {
 }
 
 .palette-item:hover {
-  background: rgba(15, 52, 96, 0.35) !important;
-  border-left-color: #53a8b6;
+  background: rgba(88, 182, 255, 0.10) !important;
+  border-left-color: var(--accent);
 }
 
 .palette-item:active {
@@ -75,8 +141,8 @@ button:disabled {
 }
 
 .palette-item.selected {
-  background: rgba(83, 168, 182, 0.15) !important;
-  border-left-color: #00e676;
+  background: rgba(88, 182, 255, 0.14) !important;
+  border-left-color: var(--high);
 }
 
 /* ---- Context menu animation ---- */
@@ -149,22 +215,22 @@ button:disabled {
   width: 100%;
   padding: 5px 8px 5px 24px;
   font-size: 11px;
-  font-family: monospace;
-  background: #0d1b30;
-  color: #eaeaea;
-  border: 1px solid #0f3460;
+  font-family: var(--mono);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .search-input:focus {
-  border-color: #53a8b6;
-  box-shadow: 0 0 0 1px rgba(83, 168, 182, 0.3);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(88, 182, 255, 0.3);
 }
 
 .search-input::placeholder {
-  color: #555;
+  color: var(--text-faint);
 }
 
 /* ---- Scrollbar styling for palette ---- */
@@ -177,16 +243,31 @@ button:disabled {
 }
 
 .palette-scroll::-webkit-scrollbar-thumb {
-  background: #0f3460;
+  background: var(--panel-border);
   border-radius: 2px;
 }
 
 .palette-scroll::-webkit-scrollbar-thumb:hover {
-  background: #53a8b6;
+  background: var(--accent);
 }
 
 /* ---- Drag ghost preview ---- */
 .drag-preview {
   opacity: 0.85;
   transform: scale(1.05);
+}
+
+/* ---- Palette + panel scrollbars (Firefox and WebKit) ---- */
+.palette-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}
+
+/* ---- Truth table rows ---- */
+table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+table tbody tr:hover {
+  background: rgba(88, 182, 255, 0.07);
 }

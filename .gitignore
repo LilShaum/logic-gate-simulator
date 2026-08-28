@@ -33,8 +33,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Optional npm dependencies
-package-lock.json
+# NOTE: package-lock.json is intentionally NOT ignored. The deploy and CI
+# workflows run `npm ci`, which requires a committed lockfile.
 
 # Testing
 coverage/

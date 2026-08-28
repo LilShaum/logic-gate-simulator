@@ -64,11 +64,16 @@ export interface UseBlocksReturn {
 
   /** Get a block definition by name (case-insensitive) */
   getBlockByName: (name: string) => CustomBlockDefinition | undefined;
+
+  /** Replace the whole library, e.g. when opening a saved circuit */
+  replaceAll: (blocks: CustomBlockDefinition[]) => void;
 }
 
-export const useBlocks = (): UseBlocksReturn => {
+export const useBlocks = (
+  initial?: CustomBlockDefinition[],
+): UseBlocksReturn => {
   const [customBlocks, setCustomBlocks] = useState<CustomBlockDefinition[]>(
-    () => loadBlocks(),
+    () => (initial && initial.length > 0 ? initial : loadBlocks()),
   );
 
   // Persist whenever blocks change
@@ -125,8 +130,13 @@ export const useBlocks = (): UseBlocksReturn => {
     [customBlocks],
   );
 
+  const replaceAll = useCallback((blocks: CustomBlockDefinition[]) => {
+    setCustomBlocks(blocks);
+  }, []);
+
   return {
     customBlocks,
+    replaceAll,
     createBlock,
     deleteBlock,
     updateBlock,

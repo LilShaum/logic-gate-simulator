@@ -2,7 +2,7 @@
 // ContextMenu — reusable right-click context menu
 // ============================================================
 
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 
 export interface ContextMenuItem {
   label: string;
@@ -76,35 +76,34 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         minWidth: 170,
         backdropFilter: 'blur(8px)',
         userSelect: 'none',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(15, 52, 96, 0.3)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
       }}
     >
       {items.map((item, i) => {
-        if (item.separator) {
-          return (
-            <div
-              key={i}
-              style={{
-                height: 1,
-                background: 'linear-gradient(to right, transparent, #0f3460, transparent)',
-                margin: '3px 8px',
-              }}
-            />
-          );
-        }
+        const divider = item.separator ? (
+          <div
+            key={`sep-${i}`}
+            style={{
+              height: 1,
+              background: `linear-gradient(to right, transparent, ${'#2a3a5c'}, transparent)`,
+              margin: '4px 8px',
+            }}
+          />
+        ) : null;
 
         return (
+          <Fragment key={i}>
+            {divider}
           <div
-            key={i}
             style={{
               padding: '5px 12px',
               fontSize: 12,
-              fontFamily: 'monospace',
+              fontFamily: 'var(--mono)',
               color: item.disabled
-                ? '#444'
+                ? 'var(--text-faint)'
                 : item.danger
                   ? '#e94560'
-                  : '#d0d0dd',
+                  : 'var(--text)',
               cursor: item.disabled ? 'default' : 'pointer',
               display: 'flex',
               justifyContent: 'space-between',
@@ -116,8 +115,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onMouseEnter={(e) => {
               if (!item.disabled) {
                 e.currentTarget.style.background = item.danger
-                  ? 'rgba(233, 69, 96, 0.12)'
-                  : 'rgba(15, 52, 96, 0.5)';
+                  ? 'rgba(255, 107, 107, 0.12)'
+                  : 'rgba(88, 182, 255, 0.14)';
               }
             }}
             onMouseLeave={(e) => {
@@ -133,9 +132,10 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           >
             <span>{item.label}</span>
             {item.shortcut && (
-              <span style={{ color: '#666', fontSize: 11 }}>{item.shortcut}</span>
+              <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{item.shortcut}</span>
             )}
           </div>
+          </Fragment>
         );
       })}
     </div>

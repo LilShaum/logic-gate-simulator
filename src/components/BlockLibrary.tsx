@@ -6,62 +6,16 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import type { CustomBlockDefinition, ElementId, GateType } from '@/types/circuit';
-import { getGateConfig } from '@/utils/gateConfigs';
+import {
+  GATE_CATEGORIES,
+  GATE_DESCRIPTIONS,
+  GATE_ICONS,
+  getGateConfig,
+} from '@/utils/gateConfigs';
 
 // Gate categories for the palette
-interface GateCategory {
-  label: string;
-  icon: string;
-  gates: GateType[];
-}
 
-const GATE_CATEGORIES: GateCategory[] = [
-  {
-    label: 'I/O',
-    icon: '⊕',
-    gates: ['INPUT', 'OUTPUT', 'CONSTANT_HIGH', 'CONSTANT_LOW'],
-  },
-  {
-    label: 'Basic',
-    icon: '&',
-    gates: ['AND', 'OR', 'NOT'],
-  },
-  {
-    label: 'Advanced',
-    icon: '=1',
-    gates: ['NAND', 'NOR', 'XOR', 'XNOR'],
-  },
-];
 
-// Icon map for gate types
-const GATE_ICONS: Record<GateType, string> = {
-  INPUT: '⊕',
-  OUTPUT: '◉',
-  CONSTANT_HIGH: '1',
-  CONSTANT_LOW: '0',
-  AND: '&',
-  OR: '≥1',
-  NOT: '¬',
-  NAND: '&̄',
-  NOR: '≥1̄',
-  XOR: '=1',
-  XNOR: '=1̄',
-};
-
-// Tooltip descriptions for each gate
-const GATE_DESCRIPTIONS: Record<GateType, string> = {
-  INPUT: 'User-toggleable input switch',
-  OUTPUT: 'LED output indicator',
-  CONSTANT_HIGH: 'Fixed HIGH (1) signal',
-  CONSTANT_LOW: 'Fixed LOW (0) signal',
-  AND: 'Outputs HIGH when all inputs HIGH',
-  OR: 'Outputs HIGH when any input HIGH',
-  NOT: 'Inverts the input signal',
-  NAND: 'AND + NOT (inverted AND)',
-  NOR: 'OR + NOT (inverted OR)',
-  XOR: 'Outputs HIGH when inputs differ',
-  XNOR: 'XOR + NOT (equality gate)',
-};
 
 interface BlockLibraryProps {
   customBlocks: CustomBlockDefinition[];

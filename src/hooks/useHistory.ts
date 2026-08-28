@@ -30,6 +30,8 @@ export interface UseHistoryReturn {
   undoLabel: string | null;
   /** Current redo label (for UI display) */
   redoLabel: string | null;
+  /** Drop all history, e.g. when a different circuit is opened */
+  clear: () => void;
 }
 
 const MAX_HISTORY = 100;
@@ -99,7 +101,14 @@ export const useHistory = (): UseHistoryReturn => {
       ? futureRef.current[futureRef.current.length - 1].label
       : null;
 
+  const clear = useCallback(() => {
+    pastRef.current = [];
+    futureRef.current = [];
+    forceRender((n) => n + 1);
+  }, []);
+
   return {
+    clear,
     pushState,
     undo,
     redo,

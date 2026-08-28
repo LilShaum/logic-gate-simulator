@@ -1,5 +1,5 @@
 import type { Gate, BoundingBox } from '@/types/circuit';
-import { getGateConfig } from './gateConfigs';
+import { getConfigForGate } from './gateConfigs';
 
 // ---------------------------------------------------------------
 // Marquee selection utilities
@@ -20,7 +20,7 @@ const normalizeRect = (
 
 /** Get the world-space bounding box of a gate */
 export const getGateBoundingBox = (gate: Gate): BoundingBox => {
-  const config = getGateConfig(gate.type);
+  const config = getConfigForGate(gate);
   return {
     x: gate.position.x,
     y: gate.position.y,

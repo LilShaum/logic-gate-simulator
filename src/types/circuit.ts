@@ -31,7 +31,7 @@ export interface Port {
   id: ElementId;
   name: string;
   direction: PortDirection;
-  /** Relative position from the gate's top-left */
+  /** Position relative to the gate's top-left corner */
   offset: Position;
 }
 
@@ -39,7 +39,14 @@ export interface Port {
 // Gate Types
 // ------------------------------------------------------------
 
-/** Supported logic gate types */
+/**
+ * Supported primitive types.
+ *
+ * Combinational: AND OR NOT NAND NOR XOR XNOR BUFFER
+ * Sources/sinks: INPUT OUTPUT CONSTANT_HIGH CONSTANT_LOW CLOCK
+ * Sequential:    D_FLIPFLOP T_FLIPFLOP SR_LATCH
+ * Composite:     BLOCK (an instance of a user-defined block)
+ */
 export type GateType =
   | 'AND'
   | 'OR'
@@ -48,12 +55,39 @@ export type GateType =
   | 'NOR'
   | 'XOR'
   | 'XNOR'
+  | 'BUFFER'
   | 'INPUT'
   | 'OUTPUT'
   | 'CONSTANT_HIGH'
-  | 'CONSTANT_LOW';
+  | 'CONSTANT_LOW'
+  | 'CLOCK'
+  | 'D_FLIPFLOP'
+  | 'T_FLIPFLOP'
+  | 'SR_LATCH'
+  | 'BLOCK';
 
-/** Configuration for each gate type (port layout, size, etc.) */
+/** Gate types whose input count the user can change (2..MAX_FAN_IN) */
+export const VARIABLE_ARITY_TYPES: GateType[] = [
+  'AND',
+  'OR',
+  'NAND',
+  'NOR',
+  'XOR',
+  'XNOR',
+];
+
+/** Gate types that hold state between ticks */
+export const SEQUENTIAL_TYPES: GateType[] = [
+  'CLOCK',
+  'D_FLIPFLOP',
+  'T_FLIPFLOP',
+  'SR_LATCH',
+];
+
+export const MIN_FAN_IN = 2;
+export const MAX_FAN_IN = 8;
+
+/** Configuration for a gate type at a given arity (port layout, size, label) */
 export interface GateConfig {
   type: GateType;
   label: string;
@@ -63,13 +97,38 @@ export interface GateConfig {
   outputs: Port[];
 }
 
+/**
+ * Memory carried by sequential primitives between simulation ticks.
+ * Keys are primitive-specific; absent keys read as `false`.
+ */
+export interface GateMemory {
+  /** Previous clock-input level, for edge detection */
+  lastClk?: boolean;
+  /** Stored Q value */
+  q?: boolean;
+  /** Free-running CLOCK: ticks elapsed since the last toggle */
+  phase?: number;
+  /** Free-running CLOCK: ticks per level (half-period) */
+  period?: number;
+}
+
 /** A placed gate instance in the circuit */
 export interface Gate {
   id: ElementId;
   type: GateType;
   position: Position;
-  /** Current output state(s) — computed from inputs */
+  /** Current output state. For multi-output gates, index 0 of `outputStates`. */
   outputState: boolean;
+  /** Per-port output states. Single-output gates use `[outputState]`. */
+  outputStates?: boolean[];
+  /** Fan-in for variable-arity gates. Defaults to the type's natural arity. */
+  inputCount?: number;
+  /** User-facing name, shown on INPUT/OUTPUT pins */
+  label?: string;
+  /** Sequential state; only present on sequential primitives */
+  memory?: GateMemory;
+  /** Period in ticks for CLOCK primitives (half-period per level) */
+  clockPeriod?: number;
   /** If set, this gate is an instance of a custom block */
   blockId?: ElementId;
 }
@@ -109,7 +168,7 @@ export interface CircuitState {
 // Simulation Types
 // ------------------------------------------------------------
 
-/** Speed presets for auto-step simulation */
+/** Speed presets for the free-running clock */
 export type SimulationSpeed = 'slow' | 'normal' | 'fast';
 
 /** The simulation run mode */
@@ -121,9 +180,11 @@ export interface SimulationState {
   speed: SimulationSpeed;
   /** Incrementing tick counter — bumped each step */
   tick: number;
+  /** Set when the last evaluation failed to reach a stable state */
+  oscillating: boolean;
 }
 
-/** Ticks-per-second for each speed preset */
+/** Milliseconds between ticks for each speed preset */
 export const SPEED_INTERVALS: Record<SimulationSpeed, number> = {
   slow: 500,
   normal: 200,
@@ -142,18 +203,13 @@ export interface Viewport {
 }
 
 /** Available tools for the editor */
-export type Tool =
-  | 'select'
-  | 'wire'
-  | 'delete'
-  | 'pan';
+export type Tool = 'select' | 'wire' | 'delete' | 'pan';
 
 /** The editor application state */
 export interface EditorState {
   circuit: CircuitState;
   viewport: Viewport;
   activeTool: Tool;
-  /** Gate type to place next (only relevant when a gate palette is open) */
   pendingGateType: GateType | null;
 }
 
@@ -210,8 +266,6 @@ export interface CustomBlockDefinition {
 
 /** Editor state for block editing mode */
 export interface BlockEditorState {
-  /** ID of the block being edited, or null */
   editingBlockId: ElementId | null;
-  /** The block's internal circuit during edit mode */
   editingCircuit: CircuitState | null;
 }

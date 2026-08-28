@@ -1,8 +1,11 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasEditor, SimulationControls, Toolbar } from '@/components';
 import { BlockLibrary } from '@/components/BlockLibrary';
+import { CircuitMenu } from '@/components/CircuitMenu';
 import { CreateBlockDialog } from '@/components/CreateBlockDialog';
-import { Toast } from '@/components/Toast';
 import { StatusBar } from '@/components/StatusBar';
+import { Toast } from '@/components/Toast';
+import { TruthTablePanel } from '@/components/TruthTablePanel';
 import type {
   CircuitState,
   CustomBlockDefinition,
@@ -10,202 +13,292 @@ import type {
   GateType,
   Viewport,
 } from '@/types/circuit';
-import { generateId } from '@/utils/generateId';
-import { analyzeSelection, expandBlockInstance, createBlockInstance } from '@/utils/blockUtils';
-import { useSimulation } from '@/hooks/useSimulation';
 import { useBlocks } from '@/hooks/useBlocks';
 import { useHistory } from '@/hooks/useHistory';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useSimulation } from '@/hooks/useSimulation';
+import { analyzeSelection, createBlockInstance, expandBlockInstance } from '@/utils/blockUtils';
+import { circuitSignature } from '@/utils/circuitSignature';
+import { createDemoCircuit } from '@/utils/demoCircuit';
+import { generateId } from '@/utils/generateId';
+import { registerBlocks } from '@/utils/gateConfigs';
+import {
+  buildDocument,
+  downloadDocument,
+  importDocumentFromFile,
+  loadAutosave,
+  loadNamed,
+  saveAutosave,
+  saveNamed,
+} from '@/utils/persistence';
 import { showToast } from '@/utils/toastService';
 import './styles.css';
 
-// ---------------------------------------------------------------
-// Seed a small demo circuit so the canvas isn't empty
-// ---------------------------------------------------------------
-const seedCircuit: CircuitState = {
-  gates: [
-    {
-      id: generateId(),
-      type: 'INPUT',
-      position: { x: 80, y: 120 },
-      outputState: false,
-    },
-    {
-      id: generateId(),
-      type: 'AND',
-      position: { x: 280, y: 100 },
-      outputState: false,
-    },
-    {
-      id: generateId(),
-      type: 'OR',
-      position: { x: 280, y: 220 },
-      outputState: false,
-    },
-    {
-      id: generateId(),
-      type: 'NOT',
-      position: { x: 480, y: 160 },
-      outputState: false,
-    },
-    {
-      id: generateId(),
-      type: 'OUTPUT',
-      position: { x: 620, y: 160 },
-      outputState: false,
-    },
-  ],
+const emptyCircuit = (): CircuitState => ({
+  gates: [],
   wires: [],
   selectedElementId: null,
   selectedGateIds: [],
-};
+});
 
-const initialViewport: Viewport = {
-  offsetX: 0,
-  offsetY: 0,
-  zoom: 1,
+const initialViewport: Viewport = { offsetX: 0, offsetY: 0, zoom: 1 };
+const AUTOSAVE_DELAY = 700;
+
+/** What to open with: whatever was last autosaved, else the demo */
+const bootstrap = () => {
+  const saved = loadAutosave();
+  if (saved && saved.circuit.gates.length > 0) {
+    return {
+      circuit: saved.circuit,
+      blocks: saved.blocks,
+      name: saved.name,
+      viewport: saved.viewport ?? initialViewport,
+    };
+  }
+  return {
+    circuit: createDemoCircuit(),
+    blocks: [] as CustomBlockDefinition[],
+    name: 'Half adder',
+    viewport: initialViewport,
+  };
 };
 
 export default function App() {
-  const [circuit, setCircuit] = useState<CircuitState>(seedCircuit);
-  const [viewport, setViewport] = useState<Viewport>(initialViewport);
+  const boot = useRef(bootstrap()).current;
 
-  // Custom blocks management
-  const blocks = useBlocks();
+  const [circuit, setCircuit] = useState<CircuitState>(boot.circuit);
+  const [viewport, setViewport] = useState<Viewport>(boot.viewport);
+  const [circuitName, setCircuitName] = useState(boot.name);
+  const [dirty, setDirty] = useState(false);
+  const [showTruthTable, setShowTruthTable] = useState(false);
 
-  // History (undo/redo)
+  const blocks = useBlocks(boot.blocks);
   const history = useHistory();
-  // Track the circuit state before a drag operation for history batching
+
+  // Any module that needs a block instance's geometry reads the registry,
+  // so it has to be refreshed before anything renders or hit-tests.
+  registerBlocks(blocks.customBlocks);
+  useEffect(() => {
+    registerBlocks(blocks.customBlocks);
+  }, [blocks.customBlocks]);
+
   const preDragCircuitRef = useRef<CircuitState | null>(null);
-  // Skip next history push (used during undo/redo to avoid re-pushing)
   const skipHistoryRef = useRef(false);
 
-  // Grid snap toggle
   const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
-
-  // Click-to-place mode: user clicks a gate in palette, then clicks canvas to place
   const [pendingGateType, setPendingGateType] = useState<GateType | null>(null);
   const [pendingBlockId, setPendingBlockId] = useState<ElementId | null>(null);
 
-  // Create block dialog state
   const [createDialogVisible, setCreateDialogVisible] = useState(false);
   const [createDialogInputCount, setCreateDialogInputCount] = useState(0);
   const [createDialogOutputCount, setCreateDialogOutputCount] = useState(0);
 
-  // Block editing mode
   const [editingBlockId, setEditingBlockId] = useState<ElementId | null>(null);
   const [editingCircuit, setEditingCircuit] = useState<CircuitState | null>(null);
-  /** Store the original circuit state before entering edit mode */
   const [preEditCircuit, setPreEditCircuit] = useState<CircuitState | null>(null);
 
-  const {
-    simulation,
-    step,
-    start,
-    pause,
-    resume,
-    reset,
-    setSpeed,
-  } = useSimulation(editingBlockId ? (editingCircuit ?? circuit) : circuit, (newCircuit) => {
-    if (editingBlockId) {
-      setEditingCircuit(newCircuit);
-    } else {
-      setCircuit(newCircuit);
-    }
-  });
+  const activeCircuit = editingBlockId && editingCircuit ? editingCircuit : circuit;
 
+  const applyToActive = useCallback(
+    (next: CircuitState) => {
+      if (editingBlockId) setEditingCircuit(next);
+      else setCircuit(next);
+    },
+    [editingBlockId],
+  );
+
+  const { simulation, evaluate, step, start, pause, resume, reset, setSpeed } = useSimulation(
+    activeCircuit,
+    applyToActive,
+    blocks.customBlocks,
+  );
+
+  // -------------------------------------------------------------
+  // Every edit funnels through here: evaluate first, then commit.
+  // That is what makes the circuit live — flip a switch or drop a
+  // wire and the result is on screen in the same frame, with no
+  // need to press Play.
+  // -------------------------------------------------------------
   const handleCircuitChange = useCallback(
-    (newCircuit: CircuitState) => {
+    (next: CircuitState) => {
+      const evaluated = evaluate(next);
+
       if (editingBlockId) {
-        setEditingCircuit(newCircuit);
+        setEditingCircuit(evaluated);
         return;
       }
 
-      // Push the current state to history before applying the change
-      if (!skipHistoryRef.current) {
-        history.pushState(circuit, 'Edit');
-      }
+      // Selection changes are not edits and must not fill up the undo stack
+      const isEdit = circuitSignature(circuit) !== circuitSignature(next);
+      if (isEdit && !skipHistoryRef.current) history.pushState(circuit, 'Edit');
       skipHistoryRef.current = false;
-      setCircuit(newCircuit);
+      if (isEdit) setDirty(true);
+      setCircuit(evaluated);
     },
-    [editingBlockId, circuit, history],
+    [circuit, editingBlockId, evaluate, history],
   );
 
-  // ---------------------------------------------------------------
-  // Drag start/end for history batching
-  // ---------------------------------------------------------------
+  // Settle whatever we booted with, so the demo shows real signal colours
+  useEffect(() => {
+    setCircuit((c) => evaluate(c));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleDragStart = useCallback(() => {
-    preDragCircuitRef.current = JSON.parse(JSON.stringify(circuit));
-  }, [circuit]);
+  // -------------------------------------------------------------
+  // Autosave (debounced on structural change)
+  // -------------------------------------------------------------
+  const signature = circuitSignature(circuit);
+  useEffect(() => {
+    if (editingBlockId) return;
+    const id = window.setTimeout(() => {
+      saveAutosave(buildDocument(circuitName, circuit, blocks.customBlocks, viewport));
+    }, AUTOSAVE_DELAY);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, circuitName, blocks.customBlocks, editingBlockId]);
 
-  const handleDragEnd = useCallback(() => {
-    if (preDragCircuitRef.current) {
-      // Push the pre-drag state to history as a single undo step
-      history.pushState(preDragCircuitRef.current, 'Move gate');
-      preDragCircuitRef.current = null;
-    }
-  }, [history]);
-
-  // ---------------------------------------------------------------
-  // Undo / Redo
-  // ---------------------------------------------------------------
-
+  // -------------------------------------------------------------
+  // Undo / redo
+  // -------------------------------------------------------------
   const handleUndo = useCallback(() => {
     const restored = history.undo();
-    if (restored) {
-      skipHistoryRef.current = true;
-      setCircuit(restored);
-    }
-  }, [history]);
+    if (!restored) return;
+    skipHistoryRef.current = true;
+    setCircuit(evaluate(restored));
+    setDirty(true);
+  }, [history, evaluate]);
 
   const handleRedo = useCallback(() => {
     const restored = history.redo();
-    if (restored) {
-      skipHistoryRef.current = true;
-      setCircuit(restored);
-    }
+    if (!restored) return;
+    skipHistoryRef.current = true;
+    setCircuit(evaluate(restored));
+    setDirty(true);
+  }, [history, evaluate]);
+
+  const handleDragStart = useCallback(() => {
+    preDragCircuitRef.current = structuredClone(circuit);
+  }, [circuit]);
+
+  const handleDragEnd = useCallback(() => {
+    if (!preDragCircuitRef.current) return;
+    history.pushState(preDragCircuitRef.current, 'Move gate');
+    preDragCircuitRef.current = null;
   }, [history]);
 
-  // Global keyboard shortcuts for undo/redo
+  // -------------------------------------------------------------
+  // File operations
+  // -------------------------------------------------------------
+  const currentDocument = useCallback(
+    () => buildDocument(circuitName || 'Untitled circuit', circuit, blocks.customBlocks, viewport),
+    [circuitName, circuit, blocks.customBlocks, viewport],
+  );
+
+  const loadDocument = useCallback(
+    (doc: ReturnType<typeof buildDocument>) => {
+      blocks.replaceAll(doc.blocks);
+      registerBlocks(doc.blocks);
+      history.clear();
+      setCircuitName(doc.name);
+      setCircuit(evaluate(doc.circuit));
+      if (doc.viewport) setViewport(doc.viewport);
+      setDirty(false);
+    },
+    [blocks, evaluate, history],
+  );
+
+  const handleSave = useCallback(() => {
+    const doc = currentDocument();
+    if (saveNamed(doc)) {
+      saveAutosave(doc);
+      setDirty(false);
+      showToast(`Saved "${doc.name}"`);
+    } else {
+      showToast('Could not save — browser storage is unavailable');
+    }
+  }, [currentDocument]);
+
+  const handleOpen = useCallback(
+    (name: string) => {
+      const doc = loadNamed(name);
+      if (!doc) {
+        showToast(`Could not open "${name}"`);
+        return;
+      }
+      loadDocument(doc);
+      showToast(`Opened "${doc.name}"`);
+    },
+    [loadDocument],
+  );
+
+  const handleNew = useCallback(() => {
+    history.clear();
+    setCircuitName('Untitled circuit');
+    setCircuit(emptyCircuit());
+    setViewport(initialViewport);
+    setDirty(false);
+    showToast('New circuit');
+  }, [history]);
+
+  const handleExport = useCallback(() => {
+    downloadDocument(currentDocument());
+    showToast('Exported .json');
+  }, [currentDocument]);
+
+  const handleImport = useCallback(async () => {
+    const doc = await importDocumentFromFile();
+    if (!doc) {
+      showToast("That file didn't look like a circuit");
+      return;
+    }
+    loadDocument(doc);
+    showToast(`Imported "${doc.name}"`);
+  }, [loadDocument]);
+
+  // -------------------------------------------------------------
+  // Global shortcuts
+  // -------------------------------------------------------------
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const isCtrl = e.ctrlKey || e.metaKey;
+      const mod = e.ctrlKey || e.metaKey;
 
-      if (isCtrl && e.key === 'z') {
+      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
-      }
-      if (isCtrl && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
+      } else if (mod && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
         e.preventDefault();
         handleRedo();
+      } else if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSave();
+      } else if (!mod && e.key.toLowerCase() === 't') {
+        setShowTruthTable((v) => !v);
+      } else if (e.key === ' ') {
+        // Space is the canvas pan modifier; only treat it as play/pause
+        // when the canvas is not the thing being held.
+        return;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, handleSave]);
 
-  // ---------------------------------------------------------------
-  // Toolbar handlers
-  // ---------------------------------------------------------------
-
-  // Smooth viewport animation (ease-out cubic) for zoom/reset/fit
-  const viewportAnimRafRef = useRef(0);
+  // -------------------------------------------------------------
+  // Viewport
+  // -------------------------------------------------------------
+  const viewportAnimRef = useRef(0);
 
   const animateViewportTo = useCallback(
     (target: Partial<Viewport>, duration = 220) => {
-      const from: Viewport = { ...viewport };
+      const from = viewport;
       const to: Viewport = {
         zoom: Math.min(Math.max(target.zoom ?? from.zoom, 0.15), 5),
         offsetX: target.offsetX ?? from.offsetX,
         offsetY: target.offsetY ?? from.offsetY,
       };
-      if (viewportAnimRafRef.current) {
-        cancelAnimationFrame(viewportAnimRafRef.current);
-      }
+      if (viewportAnimRef.current) cancelAnimationFrame(viewportAnimRef.current);
       const startTime = performance.now();
-      const stepFn = (now: number) => {
+      const tick = (now: number) => {
         const t = Math.min((now - startTime) / duration, 1);
         const eased = 1 - Math.pow(1 - t, 3);
         setViewport({
@@ -213,88 +306,72 @@ export default function App() {
           offsetX: from.offsetX + (to.offsetX - from.offsetX) * eased,
           offsetY: from.offsetY + (to.offsetY - from.offsetY) * eased,
         });
-        if (t < 1) {
-          viewportAnimRafRef.current = requestAnimationFrame(stepFn);
-        } else {
-          viewportAnimRafRef.current = 0;
-        }
+        viewportAnimRef.current = t < 1 ? requestAnimationFrame(tick) : 0;
       };
-      viewportAnimRafRef.current = requestAnimationFrame(stepFn);
+      viewportAnimRef.current = requestAnimationFrame(tick);
     },
     [viewport],
   );
 
   const handleViewportChange = useCallback((vp: Viewport) => {
-    // User-driven pan/zoom cancels any running animation
-    if (viewportAnimRafRef.current) {
-      cancelAnimationFrame(viewportAnimRafRef.current);
-      viewportAnimRafRef.current = 0;
+    if (viewportAnimRef.current) {
+      cancelAnimationFrame(viewportAnimRef.current);
+      viewportAnimRef.current = 0;
     }
     setViewport(vp);
   }, []);
 
-  const handleZoomIn = useCallback(() => {
-    animateViewportTo({ zoom: viewport.zoom * 1.2 });
-  }, [animateViewportTo, viewport]);
-
-  const handleZoomOut = useCallback(() => {
-    animateViewportTo({ zoom: viewport.zoom * 0.8 });
-  }, [animateViewportTo, viewport]);
-
-  const handleResetView = useCallback(() => {
-    animateViewportTo({ zoom: 1, offsetX: 0, offsetY: 0 }, 260);
-  }, [animateViewportTo]);
+  const handleResetView = useCallback(
+    () => animateViewportTo({ zoom: 1, offsetX: 0, offsetY: 0 }, 260),
+    [animateViewportTo],
+  );
 
   const handleFitAll = useCallback(() => {
-    if (circuit.gates.length === 0) {
+    if (activeCircuit.gates.length === 0) {
       handleResetView();
       return;
     }
+    const canvas = document.querySelector('canvas');
+    const dpr = window.devicePixelRatio || 1;
+    const canvasW = (canvas?.width ?? window.innerWidth) / dpr;
+    const canvasH = (canvas?.height ?? window.innerHeight) / dpr;
+
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const gate of circuit.gates) {
-      if (gate.position.x < minX) minX = gate.position.x;
-      if (gate.position.y < minY) minY = gate.position.y;
-      if (gate.position.x + 80 > maxX) maxX = gate.position.x + 80;
-      if (gate.position.y + 60 > maxY) maxY = gate.position.y + 60;
+    for (const gate of activeCircuit.gates) {
+      minX = Math.min(minX, gate.position.x);
+      minY = Math.min(minY, gate.position.y);
+      maxX = Math.max(maxX, gate.position.x + 90);
+      maxY = Math.max(maxY, gate.position.y + 70);
     }
-    const canvas = document.querySelector('canvas');
-    const canvasW = canvas?.width ?? window.innerWidth;
-    const canvasH = canvas?.height ?? window.innerHeight;
-    const contentW = maxX - minX + 100;
-    const contentH = maxY - minY + 100;
-    const scaleX = canvasW / contentW;
-    const scaleY = canvasH / contentH;
-    const zoom = Math.min(scaleX, scaleY, 5);
-    const clampedZoom = Math.max(zoom, 0.15);
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+
+    const margin = 120;
+    const zoom = Math.max(
+      0.15,
+      Math.min(canvasW / (maxX - minX + margin), canvasH / (maxY - minY + margin), 1.6),
+    );
     animateViewportTo(
       {
-        zoom: clampedZoom,
-        offsetX: canvasW / 2 - centerX * clampedZoom,
-        offsetY: canvasH / 2 - centerY * clampedZoom,
+        zoom,
+        offsetX: canvasW / 2 - ((minX + maxX) / 2) * zoom,
+        offsetY: canvasH / 2 - ((minY + maxY) / 2) * zoom,
       },
       300,
     );
-  }, [circuit.gates, handleResetView, animateViewportTo]);
+  }, [activeCircuit.gates, handleResetView, animateViewportTo]);
 
-  const handleToggleGridSnap = useCallback(() => {
-    setGridSnapEnabled((prev) => !prev);
+  // Centre the boot circuit once the canvas has a size
+  useEffect(() => {
+    const id = window.setTimeout(handleFitAll, 60);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------------------------------------------------------------
-  // Determine what circuit to show (declared early for handlers below)
-  // ---------------------------------------------------------------
-
-  const activeCircuit = editingBlockId && editingCircuit ? editingCircuit : circuit;
-
-  // ---------------------------------------------------------------
-  // Click-to-place mode
-  // ---------------------------------------------------------------
-
+  // -------------------------------------------------------------
+  // Placement
+  // -------------------------------------------------------------
   const handleSelectGateForPlacement = useCallback((gateType: GateType) => {
     setPendingGateType((prev) => (prev === gateType ? null : gateType));
     setPendingBlockId(null);
@@ -307,21 +384,13 @@ export default function App() {
 
   const handlePlaceGate = useCallback(
     (gateType: GateType, position: { x: number; y: number }) => {
-      const newGate = {
-        id: generateId(),
-        type: gateType,
-        position,
-        outputState: false,
-      };
-      if (handleCircuitChange) {
-        handleCircuitChange({
-          ...activeCircuit,
-          gates: [...activeCircuit.gates, newGate],
-          selectedGateIds: [newGate.id],
-          selectedElementId: null,
-        });
-        showToast(`Placed ${gateType} gate`);
-      }
+      const newGate = { id: generateId(), type: gateType, position, outputState: false };
+      handleCircuitChange({
+        ...activeCircuit,
+        gates: [...activeCircuit.gates, newGate],
+        selectedGateIds: [newGate.id],
+        selectedElementId: null,
+      });
     },
     [activeCircuit, handleCircuitChange],
   );
@@ -331,15 +400,12 @@ export default function App() {
       const blockDef = blocks.customBlocks.find((b) => b.id === blockId);
       if (!blockDef) return;
       const instance = createBlockInstance(blockId, position);
-      if (handleCircuitChange) {
-        handleCircuitChange({
-          ...activeCircuit,
-          gates: [...activeCircuit.gates, instance],
-          selectedGateIds: [instance.id],
-          selectedElementId: null,
-        });
-        showToast(`Placed block: ${blockDef.name}`);
-      }
+      handleCircuitChange({
+        ...activeCircuit,
+        gates: [...activeCircuit.gates, instance],
+        selectedGateIds: [instance.id],
+        selectedElementId: null,
+      });
     },
     [activeCircuit, handleCircuitChange, blocks.customBlocks],
   );
@@ -349,21 +415,19 @@ export default function App() {
     setPendingBlockId(null);
   }, []);
 
-  // ---------------------------------------------------------------
-  // Create Block flow
-  // ---------------------------------------------------------------
-
+  // -------------------------------------------------------------
+  // Custom blocks
+  // -------------------------------------------------------------
   const handleCreateBlockRequest = useCallback(() => {
     const analysis = analyzeSelection(circuit, circuit.selectedGateIds);
     if (!analysis) {
-      showToast('Select gates to create a block');
+      showToast('Select some gates first');
       return;
     }
     if (analysis.inputGates.length === 0 && analysis.outputGates.length === 0) {
-      showToast('Selection needs INPUT and/or OUTPUT gates');
+      showToast('A block needs IN and/or OUT pins inside the selection');
       return;
     }
-
     setCreateDialogInputCount(analysis.inputGates.length);
     setCreateDialogOutputCount(analysis.outputGates.length);
     setCreateDialogVisible(true);
@@ -371,69 +435,47 @@ export default function App() {
 
   const handleCreateBlock = useCallback(
     (name: string, description: string, icon: string) => {
-      const blockDef = blocks.createBlock(
-        name,
-        description,
-        icon,
-        circuit,
-        circuit.selectedGateIds,
-      );
-
+      const blockDef = blocks.createBlock(name, description, icon, circuit, circuit.selectedGateIds);
       if (blockDef) {
-        showToast(`Created block: ${blockDef.name}`);
-
-        // Push pre-creation state to history
         history.pushState(circuit, 'Create block');
-
-        // Remove the selected gates from the circuit (they're now inside the block)
-        const selectedSet = new Set(circuit.selectedGateIds);
-        const newGates = circuit.gates.filter((g) => !selectedSet.has(g.id));
-        const newWires = circuit.wires.filter(
-          (w) => !selectedSet.has(w.fromGateId) && !selectedSet.has(w.toGateId),
-        );
-
+        const selected = new Set(circuit.selectedGateIds);
         skipHistoryRef.current = true;
-        setCircuit({
-          ...circuit,
-          gates: newGates,
-          wires: newWires,
-          selectedGateIds: [],
-          selectedElementId: null,
-        });
+        setCircuit(
+          evaluate({
+            ...circuit,
+            gates: circuit.gates.filter((g) => !selected.has(g.id)),
+            wires: circuit.wires.filter(
+              (w) => !selected.has(w.fromGateId) && !selected.has(w.toGateId),
+            ),
+            selectedGateIds: [],
+            selectedElementId: null,
+          }),
+        );
+        setDirty(true);
+        showToast(`Created block "${blockDef.name}"`);
       }
-
       setCreateDialogVisible(false);
     },
-    [circuit, blocks, history],
+    [circuit, blocks, history, evaluate],
   );
-
-  // ---------------------------------------------------------------
-  // Block editing mode
-  // ---------------------------------------------------------------
 
   const handleEnterEditMode = useCallback(
     (blockId: ElementId) => {
       const blockDef = blocks.getBlock(blockId);
       if (!blockDef) return;
-
-      // Find the gate instance in the circuit
       const gateInstance = circuit.gates.find((g) => g.blockId === blockId);
       if (!gateInstance) return;
 
-      // Expand the block to its internal gates+wires
       const expanded = expandBlockInstance(blockDef, gateInstance.position);
-
-      const editingState: CircuitState = {
+      setPreEditCircuit(circuit);
+      setEditingBlockId(blockId);
+      setEditingCircuit({
         gates: expanded.gates,
         wires: expanded.wires,
         selectedElementId: null,
         selectedGateIds: [],
-      };
-
-      setPreEditCircuit(circuit);
-      setEditingBlockId(blockId);
-      setEditingCircuit(editingState);
-      showToast(`Editing block: ${blockDef.name}`);
+      });
+      showToast(`Editing "${blockDef.name}"`);
     },
     [circuit, blocks],
   );
@@ -443,54 +485,45 @@ export default function App() {
       if (!editingBlockId || !editingCircuit) return;
 
       if (saveChanges) {
-        // Save the edited internal circuit back to the block definition
         const blockDef = blocks.getBlock(editingBlockId);
         if (blockDef) {
-          // Re-compute relative positions
-          let minX = Infinity;
-          let minY = Infinity;
-          for (const gate of editingCircuit.gates) {
-            if (gate.position.x < minX) minX = gate.position.x;
-            if (gate.position.y < minY) minY = gate.position.y;
-          }
+          const minX = Math.min(...editingCircuit.gates.map((g) => g.position.x), 0);
+          const minY = Math.min(...editingCircuit.gates.map((g) => g.position.y), 0);
+          const gateIds = new Set(editingCircuit.gates.map((g) => g.id));
 
-          const updatedDef: CustomBlockDefinition = {
+          blocks.updateBlock({
             ...blockDef,
             internalGates: editingCircuit.gates.map((g) => ({
               ...g,
-              position: {
-                x: g.position.x - minX,
-                y: g.position.y - minY,
-              },
+              position: { x: g.position.x - minX, y: g.position.y - minY },
             })),
             internalWires: editingCircuit.wires,
+            inputPorts: blockDef.inputPorts.filter((p) => gateIds.has(p.internalGateId)),
+            outputPorts: blockDef.outputPorts.filter((p) => gateIds.has(p.internalGateId)),
             timestamp: Date.now(),
-          };
-
-          // Re-compute port mappings for gates that still exist
-          const gateIdSet = new Set(editingCircuit.gates.map((g) => g.id));
-          updatedDef.inputPorts = blockDef.inputPorts.filter((p) =>
-            gateIdSet.has(p.internalGateId),
-          );
-          updatedDef.outputPorts = blockDef.outputPorts.filter((p) =>
-            gateIdSet.has(p.internalGateId),
-          );
-
-          blocks.updateBlock(updatedDef);
-          showToast(`Saved changes to: ${blockDef.name}`);
+          });
+          setDirty(true);
+          showToast(`Saved "${blockDef.name}"`);
         }
       }
 
-      // Restore the pre-edit circuit
-      if (preEditCircuit) {
-        setCircuit(preEditCircuit);
-      }
-
+      if (preEditCircuit) setCircuit(evaluate(preEditCircuit));
       setEditingBlockId(null);
       setEditingCircuit(null);
       setPreEditCircuit(null);
     },
-    [editingBlockId, editingCircuit, preEditCircuit, blocks],
+    [editingBlockId, editingCircuit, preEditCircuit, blocks, evaluate],
+  );
+
+  const selectionCount = activeCircuit.selectedGateIds.length;
+  const canvasProps = useMemo(
+    () => ({
+      customBlocks: blocks.customBlocks,
+      gridSnapEnabled,
+      pendingGateType,
+      pendingBlockId,
+    }),
+    [blocks.customBlocks, gridSnapEnabled, pendingGateType, pendingBlockId],
   );
 
   return (
@@ -504,12 +537,12 @@ export default function App() {
         position: 'relative',
       }}
     >
-      {/* Simulation controls - hidden during block editing */}
       {!editingBlockId && (
         <SimulationControls
           mode={simulation.mode}
           speed={simulation.speed}
           tick={simulation.tick}
+          oscillating={simulation.oscillating}
           onStart={start}
           onPause={pause}
           onResume={resume}
@@ -519,127 +552,74 @@ export default function App() {
         />
       )}
 
-      {/* Block editor toolbar (shown during edit mode) */}
-      {editingBlockId && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            zIndex: 100,
-            display: 'flex',
-            gap: 8,
-            alignItems: 'center',
-            background: 'rgba(42, 30, 10, 0.92)',
-            borderRadius: 8,
-            padding: '6px 12px',
-            border: '1px solid #a85d00',
-            backdropFilter: 'blur(6px)',
-            userSelect: 'none',
+      {!editingBlockId && (
+        <CircuitMenu
+          name={circuitName}
+          dirty={dirty}
+          onRename={(n) => {
+            setCircuitName(n);
+            setDirty(true);
           }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontFamily: 'monospace',
-              fontWeight: 'bold',
-              color: '#ffb347',
-            }}
-          >
-            EDITING: {blocks.getBlock(editingBlockId)?.name ?? 'Block'}
-          </span>
-          <button
-            style={{
-              padding: '4px 10px',
-              fontSize: 11,
-              fontFamily: 'monospace',
-              background: '#2a5a00',
-              color: '#7cfc00',
-              border: '1px solid #7cfc00',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-            onClick={() => handleExitEditMode(true)}
-          >
-            Save & Exit
-          </button>
-          <button
-            style={{
-              padding: '4px 10px',
-              fontSize: 11,
-              fontFamily: 'monospace',
-              background: '#5a1a1a',
-              color: '#ff6b6b',
-              border: '1px solid #ff6b6b',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-            onClick={() => handleExitEditMode(false)}
-          >
-            Discard
-          </button>
-        </div>
+          onNew={handleNew}
+          onSave={handleSave}
+          onOpen={handleOpen}
+          onExport={handleExport}
+          onImport={handleImport}
+        />
       )}
 
-      {/* "Create Block" toolbar button (shown when gates selected, not in edit mode) */}
-      {!editingBlockId && circuit.selectedGateIds.length > 0 && (
-        <div
+      {editingBlockId && <BlockEditBar name={blocks.getBlock(editingBlockId)?.name} onExit={handleExitEditMode} />}
+
+      {!editingBlockId && selectionCount > 0 && (
+        <button
+          onClick={handleCreateBlockRequest}
           style={{
             position: 'absolute',
-            top: 12,
+            top: 58,
             left: '50%',
             transform: 'translateX(-50%)',
-            zIndex: 100,
+            zIndex: 120,
+            padding: '6px 14px',
+            fontSize: 11,
+            fontFamily: 'var(--mono)',
+            background: 'rgba(88, 182, 255, 0.16)',
+            color: '#9fd6ff',
+            border: '1px solid #58b6ff',
+            borderRadius: 6,
+            cursor: 'pointer',
+            backdropFilter: 'blur(8px)',
           }}
         >
-          <button
-            style={{
-              padding: '6px 14px',
-              fontSize: 11,
-              fontFamily: 'monospace',
-              background: 'rgba(22, 33, 62, 0.92)',
-              color: '#53a8b6',
-              border: '1px solid #53a8b6',
-              borderRadius: 6,
-              cursor: 'pointer',
-              backdropFilter: 'blur(6px)',
-              userSelect: 'none',
-            }}
-            onClick={handleCreateBlockRequest}
-          >
-            Create Block ({circuit.selectedGateIds.length} gates)
-          </button>
-        </div>
+          Create block from {selectionCount} gate{selectionCount === 1 ? '' : 's'}
+        </button>
       )}
 
-      {/* Canvas */}
       <CanvasEditor
         circuit={activeCircuit}
         viewport={viewport}
         onViewportChange={handleViewportChange}
         onCircuitChange={handleCircuitChange}
-        customBlocks={blocks.customBlocks}
+        customBlocks={canvasProps.customBlocks}
         onCreateBlockRequest={handleCreateBlockRequest}
         editingBlockId={editingBlockId}
         onEnterEditMode={handleEnterEditMode}
-        gridSnapEnabled={gridSnapEnabled}
+        gridSnapEnabled={canvasProps.gridSnapEnabled}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         simulationSpeed={simulation.speed}
         simulationRunning={simulation.mode === 'running'}
-        pendingGateType={pendingGateType}
-        pendingBlockId={pendingBlockId}
+        pendingGateType={canvasProps.pendingGateType}
+        pendingBlockId={canvasProps.pendingBlockId}
         onPlaceGate={handlePlaceGate}
         onPlaceBlock={handlePlaceBlock}
         onCancelPlacement={handleCancelPlacement}
       />
 
-      {/* Bottom toolbar: zoom, grid, undo/redo, help */}
       {!editingBlockId && (
         <Toolbar
           viewport={viewport}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
+          onZoomIn={() => animateViewportTo({ zoom: viewport.zoom * 1.2 })}
+          onZoomOut={() => animateViewportTo({ zoom: viewport.zoom * 0.8 })}
           onResetView={handleResetView}
           onFitAll={handleFitAll}
           canUndo={history.canUndo}
@@ -649,18 +629,17 @@ export default function App() {
           onUndo={handleUndo}
           onRedo={handleRedo}
           gridSnapEnabled={gridSnapEnabled}
-          onToggleGridSnap={handleToggleGridSnap}
+          onToggleGridSnap={() => setGridSnapEnabled((v) => !v)}
+          truthTableOpen={showTruthTable}
+          onToggleTruthTable={() => setShowTruthTable((v) => !v)}
         />
       )}
 
-      {/* Block library palette */}
       {!editingBlockId && (
         <BlockLibrary
           customBlocks={blocks.customBlocks}
           onDeleteBlock={blocks.deleteBlock}
-          onDragBlock={() => {
-            // No-op: drag is handled by HTML5 drag API
-          }}
+          onDragBlock={() => {}}
           onSelectGateForPlacement={handleSelectGateForPlacement}
           onSelectBlockForPlacement={handleSelectBlockForPlacement}
           selectedGateType={pendingGateType}
@@ -668,7 +647,13 @@ export default function App() {
         />
       )}
 
-      {/* Create Block Dialog */}
+      <TruthTablePanel
+        visible={showTruthTable && !editingBlockId}
+        circuit={activeCircuit}
+        blocks={blocks.customBlocks}
+        onClose={() => setShowTruthTable(false)}
+      />
+
       <CreateBlockDialog
         visible={createDialogVisible}
         inputCount={createDialogInputCount}
@@ -677,7 +662,6 @@ export default function App() {
         onCancel={() => setCreateDialogVisible(false)}
       />
 
-      {/* Status bar */}
       {!editingBlockId && (
         <StatusBar
           viewport={viewport}
@@ -685,9 +669,10 @@ export default function App() {
           simulationMode={simulation.mode}
           simulationSpeed={simulation.speed}
           simulationTick={simulation.tick}
-          selectionCount={circuit.selectedGateIds.length}
-          gateCount={circuit.gates.length}
-          wireCount={circuit.wires.length}
+          selectionCount={selectionCount}
+          gateCount={activeCircuit.gates.length}
+          wireCount={activeCircuit.wires.length}
+          oscillating={simulation.oscillating}
         />
       )}
 
@@ -695,3 +680,63 @@ export default function App() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------
+
+const BlockEditBar: React.FC<{ name?: string; onExit: (save: boolean) => void }> = ({
+  name,
+  onExit,
+}) => (
+  <div
+    style={{
+      position: 'absolute',
+      top: 12,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 130,
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      background: 'rgba(42, 30, 10, 0.92)',
+      borderRadius: 8,
+      padding: '6px 12px',
+      border: '1px solid #a85d00',
+      backdropFilter: 'blur(8px)',
+      userSelect: 'none',
+    }}
+  >
+    <span style={{ fontSize: 11, fontFamily: 'var(--mono)', fontWeight: 600, color: '#ffb454' }}>
+      EDITING: {name ?? 'Block'}
+    </span>
+    <button
+      style={{
+        padding: '4px 10px',
+        fontSize: 11,
+        fontFamily: 'var(--mono)',
+        background: 'rgba(61,220,151,0.15)',
+        color: '#3ddc97',
+        border: '1px solid #3ddc97',
+        borderRadius: 4,
+        cursor: 'pointer',
+      }}
+      onClick={() => onExit(true)}
+    >
+      Save &amp; exit
+    </button>
+    <button
+      style={{
+        padding: '4px 10px',
+        fontSize: 11,
+        fontFamily: 'var(--mono)',
+        background: 'rgba(255,107,107,0.12)',
+        color: '#ff6b6b',
+        border: '1px solid #ff6b6b',
+        borderRadius: 4,
+        cursor: 'pointer',
+      }}
+      onClick={() => onExit(false)}
+    >
+      Discard
+    </button>
+  </div>
+);

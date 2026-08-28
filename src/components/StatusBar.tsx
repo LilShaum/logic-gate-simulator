@@ -13,6 +13,8 @@ interface StatusBarProps {
   selectionCount: number;
   gateCount: number;
   wireCount: number;
+  /** Circuit failed to settle */
+  oscillating?: boolean;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -24,13 +26,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   selectionCount,
   gateCount,
   wireCount,
+  oscillating = false,
 }) => {
   const zoomPercent = (viewport.zoom * 100).toFixed(0);
 
   const modeColors: Record<SimulationMode, string> = {
-    stopped: '#8888aa',
-    running: '#00e676',
-    paused: '#ffb347',
+    stopped: '#8b9ac0',
+    running: '#3ddc97',
+    paused: '#ffb454',
   };
 
   const modeLabels: Record<SimulationMode, string> = {
@@ -58,12 +61,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 12px',
-        background: 'rgba(10, 15, 30, 0.92)',
-        borderTop: '1px solid #0f3460',
+        background: 'rgba(18, 26, 45, 0.92)',
+        borderTop: '1px solid #2a3a5c',
         backdropFilter: 'blur(6px)',
         fontSize: 10,
-        fontFamily: 'monospace',
-        color: '#666',
+        fontFamily: 'var(--mono)',
+        color: '#5d6a8a',
         userSelect: 'none',
         zIndex: 50,
         gap: 12,
@@ -78,11 +81,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <StatusItem
           label="Grid"
           value={gridSnapEnabled ? 'Snap' : 'Free'}
-          valueColor={gridSnapEnabled ? '#53a8b6' : '#8888aa'}
+          valueColor={gridSnapEnabled ? '#58b6ff' : '#8b9ac0'}
         />
 
         {/* Divider */}
-        <div style={{ width: 1, height: 12, background: '#1a3050' }} />
+        <div style={{ width: 1, height: 12, background: '#2a3a5c' }} />
 
         {/* Circuit stats */}
         <StatusItem label="Gates" value={String(gateCount)} />
@@ -91,13 +94,13 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
       {/* Center section */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Selection */}
         {selectionCount > 0 && (
-          <StatusItem
-            label="Selected"
-            value={`${selectionCount}`}
-            valueColor="#53a8b6"
-          />
+          <StatusItem label="Selected" value={`${selectionCount}`} valueColor="#58b6ff" />
+        )}
+        {oscillating && (
+          <span style={{ color: '#ffb454', fontWeight: 600 }}>
+            ⚠ circuit never settled
+          </span>
         )}
       </div>
 
@@ -117,7 +120,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             {modeLabels[simulationMode]}
           </span>
           {simulationMode !== 'stopped' && (
-            <span style={{ color: '#555', marginLeft: 2 }}>
+            <span style={{ color: '#5d6a8a', marginLeft: 2 }}>
               {speedLabels[simulationSpeed]}
             </span>
           )}
@@ -125,7 +128,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
         {simulationMode !== 'stopped' && (
           <>
-            <div style={{ width: 1, height: 12, background: '#1a3050' }} />
+            <div style={{ width: 1, height: 12, background: '#2a3a5c' }} />
             <StatusItem label="Tick" value={String(simulationTick)} />
           </>
         )}
@@ -144,7 +147,7 @@ const StatusItem: React.FC<{
   valueColor?: string;
 }> = ({ label, value, valueColor }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-    <span style={{ color: '#555' }}>{label}:</span>
-    <span style={{ color: valueColor ?? '#8888aa' }}>{value}</span>
+    <span style={{ color: '#5d6a8a' }}>{label}:</span>
+    <span style={{ color: valueColor ?? '#8b9ac0' }}>{value}</span>
   </div>
 );

@@ -26,27 +26,41 @@ export const Tooltip: React.FC<TooltipProps> = ({
 }) => {
   const [visible, setVisible] = useState(false);
   const [coords, setCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  /** Resolved placement — may differ from `position` if there was no room */
+  const [placement, setPlacement] = useState<'top' | 'bottom' | 'left' | 'right'>(position);
   const triggerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showTooltip = useCallback(() => {
     timerRef.current = setTimeout(() => {
-      if (triggerRef.current) {
-        const rect = triggerRef.current.getBoundingClientRect();
-        let x = rect.left + rect.width / 2;
-        let y = rect.top;
-        if (position === 'bottom') {
-          y = rect.bottom;
-        } else if (position === 'left') {
-          x = rect.left;
-          y = rect.top + rect.height / 2;
-        } else if (position === 'right') {
-          x = rect.right;
-          y = rect.top + rect.height / 2;
-        }
-        setCoords({ x, y });
-        setVisible(true);
+      if (!triggerRef.current) return;
+      const rect = triggerRef.current.getBoundingClientRect();
+
+      // Flip to the opposite side when the preferred one would put the
+      // tooltip off-screen — top-row toolbars used to clip theirs away.
+      const MARGIN = 44;
+      let side = position;
+      if (side === 'top' && rect.top < MARGIN) side = 'bottom';
+      else if (side === 'bottom' && window.innerHeight - rect.bottom < MARGIN) side = 'top';
+      else if (side === 'left' && rect.left < 120) side = 'right';
+      else if (side === 'right' && window.innerWidth - rect.right < 120) side = 'left';
+
+      let x = rect.left + rect.width / 2;
+      let y = side === 'bottom' ? rect.bottom : rect.top;
+      if (side === 'left') {
+        x = rect.left;
+        y = rect.top + rect.height / 2;
+      } else if (side === 'right') {
+        x = rect.right;
+        y = rect.top + rect.height / 2;
       }
+
+      // Keep the tooltip clear of the left and right edges too
+      x = Math.min(Math.max(x, 90), window.innerWidth - 90);
+
+      setPlacement(side);
+      setCoords({ x, y });
+      setVisible(true);
     }, delay);
   }, [delay, position]);
 
@@ -65,7 +79,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   }, []);
 
   const getTransform = (): string => {
-    switch (position) {
+    switch (placement) {
       case 'top': return 'translate(-50%, -100%)';
       case 'bottom': return 'translate(-50%, 8px)';
       case 'left': return 'translate(-100%, -50%)';

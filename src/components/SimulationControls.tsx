@@ -16,6 +16,8 @@ interface SimulationControlsProps {
   mode: SimulationMode;
   speed: SimulationSpeed;
   tick: number;
+  /** Set when the circuit never settled — usually an unbuffered feedback loop */
+  oscillating?: boolean;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -28,6 +30,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   mode,
   speed,
   tick,
+  oscillating = false,
   onStart,
   onPause,
   onResume,
@@ -108,6 +111,15 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
 
         {/* Tick counter */}
         <span style={styles.tickLabel}>T:{tick}</span>
+
+        {oscillating && (
+          <span
+            style={styles.oscillating}
+            title="The circuit never settled. A feedback loop needs a flip-flop or an inverter chain with an odd number of stages."
+          >
+            ⚠ UNSTABLE
+          </span>
+        )}
       </div>
     </div>
   );
@@ -123,10 +135,10 @@ const styles: Record<string, React.CSSProperties> = {
     top: 12,
     left: 12,
     zIndex: 100,
-    background: 'rgba(10, 15, 30, 0.94)',
+    background: 'rgba(18, 26, 45, 0.92)',
     borderRadius: 10,
     padding: '5px 8px',
-    border: '1px solid #1a3050',
+    border: '1px solid #2a3a5c',
     backdropFilter: 'blur(8px)',
     userSelect: 'none',
     boxShadow: '0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(15,52,96,0.2)',
@@ -148,54 +160,65 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: 14,
-    background: '#111a30',
-    color: '#c0c0d0',
-    border: '1px solid #1a3050',
+    background: 'rgba(0,0,0,0.25)',
+    color: '#e6ecf7',
+    border: '1px solid #2a3a5c',
     borderRadius: 5,
     cursor: 'pointer',
     lineHeight: 1,
     padding: 0,
-    fontFamily: 'monospace',
+    fontFamily: 'var(--mono)',
     transition: 'all 0.12s ease',
   },
   buttonActive: {
-    background: 'rgba(0, 230, 118, 0.12)',
-    borderColor: '#00e676',
-    color: '#00e676',
+    background: 'rgba(61, 220, 151, 0.14)',
+    borderColor: '#3ddc97',
+    color: '#3ddc97',
   },
   separator: {
     width: 1,
     height: 20,
-    background: 'linear-gradient(to bottom, transparent, #1a3050, transparent)',
+    background: 'linear-gradient(to bottom, transparent, #2a3a5c, transparent)',
     margin: '0 2px',
   },
   speedGroup: {
     display: 'flex',
     gap: 1,
-    border: '1px solid #1a3050',
+    border: '1px solid #2a3a5c',
     borderRadius: 5,
     overflow: 'hidden',
   },
   speedBtn: {
     padding: '3px 7px',
     fontSize: 10,
-    fontFamily: 'monospace',
-    background: '#111a30',
-    color: '#666',
+    fontFamily: 'var(--mono)',
+    background: 'rgba(0,0,0,0.25)',
+    color: '#5d6a8a',
     border: 'none',
-    borderRight: '1px solid #1a3050',
+    borderRight: '1px solid #2a3a5c',
     cursor: 'pointer',
     transition: 'all 0.12s ease',
     height: 26,
   },
   speedBtnActive: {
-    background: 'rgba(83, 168, 182, 0.15)',
-    color: '#53a8b6',
+    background: 'rgba(88, 182, 255, 0.16)',
+    color: '#58b6ff',
   },
   tickLabel: {
     marginLeft: 4,
     fontSize: 10,
-    fontFamily: 'monospace',
-    color: '#555',
+    fontFamily: 'var(--mono)',
+    color: '#5d6a8a',
+  },
+  oscillating: {
+    marginLeft: 6,
+    padding: '3px 7px',
+    fontSize: 10,
+    fontFamily: 'var(--mono)',
+    color: '#ffb454',
+    background: 'rgba(255, 180, 84, 0.12)',
+    border: '1px solid rgba(255, 180, 84, 0.5)',
+    borderRadius: 4,
+    cursor: 'help',
   },
 };

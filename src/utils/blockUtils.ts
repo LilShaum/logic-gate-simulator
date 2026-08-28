@@ -7,8 +7,6 @@ import type {
   CustomBlockDefinition,
   ElementId,
   Gate,
-  GateConfig,
-  GateType,
   Wire,
 } from '@/types/circuit';
 import { generateId } from '@/utils/generateId';
@@ -179,54 +177,8 @@ export const buildBlockDefinition = (
   };
 };
 
-// ---------------------------------------------------------------
-// Get GateConfig for a custom block
-// ---------------------------------------------------------------
-
-const BLOCK_DEFAULT_WIDTH = 90;
-const BLOCK_DEFAULT_HEIGHT = 60;
-
-/**
- * Create a GateConfig from a CustomBlockDefinition.
- * This allows the rendering system to treat custom blocks like native gates.
- */
-export const getBlockGateConfig = (blockDef: CustomBlockDefinition): GateConfig => {
-  const inputCount = blockDef.inputPorts.length;
-  const outputCount = blockDef.outputPorts.length;
-
-  // Size scales slightly with port count
-  const width = Math.max(BLOCK_DEFAULT_WIDTH, Math.max(inputCount, outputCount) * 30);
-  const height = BLOCK_DEFAULT_HEIGHT;
-
-  const inputs = blockDef.inputPorts.map((port, i) => ({
-    id: `block-in-${i}`,
-    name: port.name,
-    direction: 'input' as const,
-    offset: {
-      x: 0,
-      y: ((i + 1) / (inputCount + 1)) * height * 0.8,
-    },
-  }));
-
-  const outputs = blockDef.outputPorts.map((port, i) => ({
-    id: `block-out-${i}`,
-    name: port.name,
-    direction: 'output' as const,
-    offset: {
-      x: width,
-      y: ((i + 1) / (outputCount + 1)) * height * 0.8,
-    },
-  }));
-
-  return {
-    type: 'AND' as GateType, // placeholder type — block rendering uses custom logic
-    label: blockDef.name,
-    width,
-    height,
-    inputs,
-    outputs,
-  };
-};
+// Block geometry lives in gateConfigs so every module resolves it the same way.
+export { getBlockGateConfig } from '@/utils/gateConfigs';
 
 // ---------------------------------------------------------------
 // Create a block instance gate
@@ -240,7 +192,7 @@ export const createBlockInstance = (
   position: { x: number; y: number },
 ): Gate => ({
   id: generateId(),
-  type: 'AND' as GateType, // placeholder — blockId determines actual behavior
+  type: 'BLOCK',
   position,
   outputState: false,
   blockId,

@@ -1,56 +1,93 @@
 // ============================================================
-// useSimulation — manages simulation lifecycle, auto-step timer
+// useSimulation — owns the tick timer and the persistent state
+// of sequential elements.
+//
+// Note that *evaluation* is not gated on the simulation running.
+// The circuit is always live: editing a wire or flipping a switch
+// re-evaluates immediately. Running only matters for elements that
+// need the passage of time, i.e. CLOCK primitives.
 // ============================================================
 
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CircuitState,
+  CustomBlockDefinition,
   SimulationSpeed,
   SimulationState,
 } from '@/types/circuit';
 import { SPEED_INTERVALS } from '@/types/circuit';
-import { simulationStep } from '@/utils/simulation';
+import type { MemoryStore } from '@/utils/simulation';
+import { evaluateCircuit, resetCircuitState } from '@/utils/simulation';
 
 const initialSimState: SimulationState = {
   mode: 'stopped',
   speed: 'normal',
   tick: 0,
+  oscillating: false,
 };
 
 interface UseSimulationReturn {
   simulation: SimulationState;
-  /** Run a single simulation step */
+  /** Re-evaluate without advancing time. Use after any circuit edit. */
+  evaluate: (circuit: CircuitState) => CircuitState;
+  /** Advance one tick (clocks move, flip-flops see edges) */
   step: () => void;
-  /** Start auto-stepping */
   start: () => void;
-  /** Pause auto-stepping (keeps tick count) */
   pause: () => void;
-  /** Resume from pause */
   resume: () => void;
-  /** Stop and reset tick to 0 */
+  /** Stop, clear stored flip-flop state and zero the tick counter */
   reset: () => void;
-  /** Change speed preset */
   setSpeed: (speed: SimulationSpeed) => void;
 }
 
 export const useSimulation = (
   circuit: CircuitState,
   onCircuitChange: (c: CircuitState) => void,
+  blocks: CustomBlockDefinition[] = [],
 ): UseSimulationReturn => {
   const [simulation, setSimulation] = useState<SimulationState>(initialSimState);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const circuitRef = useRef(circuit);
 
-  // Keep circuitRef current
+  // Latest-value refs, so timer callbacks never read stale state
+  const circuitRef = useRef(circuit);
+  const blocksRef = useRef(blocks);
+  const onChangeRef = useRef(onCircuitChange);
+  const speedRef = useRef<SimulationSpeed>(initialSimState.speed);
+  /** Sequential state for elements nested inside custom blocks */
+  const memoryRef = useRef<MemoryStore>(new Map());
+
   useEffect(() => {
     circuitRef.current = circuit;
   }, [circuit]);
+  useEffect(() => {
+    blocksRef.current = blocks;
+  }, [blocks]);
+  useEffect(() => {
+    onChangeRef.current = onCircuitChange;
+  }, [onCircuitChange]);
+
+  /** Evaluate a circuit in place, without advancing time */
+  const evaluate = useCallback((c: CircuitState): CircuitState => {
+    const { circuit: next, stable } = evaluateCircuit(c, {
+      blocks: blocksRef.current,
+      memoryStore: memoryRef.current,
+    });
+    setSimulation((prev) =>
+      prev.oscillating === !stable ? prev : { ...prev, oscillating: !stable },
+    );
+    return next;
+  }, []);
 
   const stepInternal = useCallback(() => {
-    const updated = simulationStep(circuitRef.current);
-    onCircuitChange(updated);
-    setSimulation((prev) => ({ ...prev, tick: prev.tick + 1 }));
-  }, [onCircuitChange]);
+    const { circuit: next, stable } = evaluateCircuit(circuitRef.current, {
+      blocks: blocksRef.current,
+      memoryStore: memoryRef.current,
+      advanceTick: true,
+    });
+    circuitRef.current = next;
+    onChangeRef.current(next);
+    setSimulation((prev) => ({ ...prev, tick: prev.tick + 1, oscillating: !stable }));
+  }, []);
 
   const clearTimer = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -62,65 +99,52 @@ export const useSimulation = (
   const startTimer = useCallback(
     (speed: SimulationSpeed) => {
       clearTimer();
-      intervalRef.current = setInterval(() => {
-        stepInternal();
-      }, SPEED_INTERVALS[speed]);
+      intervalRef.current = setInterval(stepInternal, SPEED_INTERVALS[speed]);
     },
     [clearTimer, stepInternal],
   );
 
   const step = useCallback(() => {
+    // A manual step while running would double-tick; pause first.
     stepInternal();
   }, [stepInternal]);
 
   const start = useCallback(() => {
     setSimulation((prev) => ({ ...prev, mode: 'running' }));
-    startTimer(simulation.speed);
-  }, [startTimer, simulation.speed]);
+    startTimer(speedRef.current);
+  }, [startTimer]);
 
   const pause = useCallback(() => {
     clearTimer();
     setSimulation((prev) => ({ ...prev, mode: 'paused' }));
   }, [clearTimer]);
 
-  const resume = useCallback(() => {
-    setSimulation((prev) => ({ ...prev, mode: 'running' }));
-    startTimer(simulation.speed);
-  }, [startTimer, simulation.speed]);
+  const resume = start;
 
   const reset = useCallback(() => {
     clearTimer();
-    setSimulation(initialSimState);
+    memoryRef.current.clear();
+    const cleared = resetCircuitState(circuitRef.current, {
+      blocks: blocksRef.current,
+      memoryStore: memoryRef.current,
+    });
+    circuitRef.current = cleared;
+    onChangeRef.current(cleared);
+    setSimulation({ ...initialSimState, speed: speedRef.current });
   }, [clearTimer]);
 
   const setSpeed = useCallback(
     (speed: SimulationSpeed) => {
+      speedRef.current = speed;
       setSimulation((prev) => {
-        const next = { ...prev, speed };
-        // If currently running, restart timer with new speed
-        if (prev.mode === 'running') {
-          clearTimer();
-          // Use a timeout to avoid stale closure
-          setTimeout(() => startTimer(speed), 0);
-        }
-        return next;
+        if (prev.mode === 'running') startTimer(speed);
+        return { ...prev, speed };
       });
     },
-    [clearTimer, startTimer],
+    [startTimer],
   );
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => clearTimer();
-  }, [clearTimer]);
+  useEffect(() => clearTimer, [clearTimer]);
 
-  return {
-    simulation,
-    step,
-    start,
-    pause,
-    resume,
-    reset,
-    setSpeed,
-  };
+  return { simulation, evaluate, step, start, pause, resume, reset, setSpeed };
 };

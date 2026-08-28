@@ -23,6 +23,9 @@ interface ToolbarProps {
   /** Grid snap */
   gridSnapEnabled: boolean;
   onToggleGridSnap: () => void;
+  /** Truth table panel */
+  truthTableOpen: boolean;
+  onToggleTruthTable: () => void;
 }
 
 // ---------------------------------------------------------------
@@ -66,6 +69,10 @@ const SHORTCUTS = [
     { keys: 'Drag gate from palette', desc: 'Drag-and-drop to place' },
     { keys: 'Escape', desc: 'Cancel placement' },
   ]},
+  { category: 'Circuit', items: [
+    { keys: 'Ctrl + S', desc: 'Save circuit to this browser' },
+    { keys: 'T', desc: 'Toggle the truth table' },
+  ]},
   { category: 'Other', items: [
     { keys: '? button / ? key', desc: 'Toggle this help' },
     { keys: 'Right-click', desc: 'Context menu' },
@@ -95,7 +102,7 @@ const HelpOverlay: React.FC<{ onClose: () => void }> = ({ onClose }) => (
       className="overlay-panel"
       style={{
         background: 'rgba(12, 20, 40, 0.98)',
-        border: '1px solid #1a3050',
+        border: '1px solid #2a3a5c',
         borderRadius: 12,
         padding: '20px 28px',
         maxWidth: 540,
@@ -103,25 +110,25 @@ const HelpOverlay: React.FC<{ onClose: () => void }> = ({ onClose }) => (
         maxHeight: '80vh',
         overflowY: 'auto',
         color: '#eaeaea',
-        fontFamily: 'monospace',
+        fontFamily: 'var(--mono)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(15,52,96,0.3)',
       }}
       onClick={(e) => e.stopPropagation()}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 15, color: '#53a8b6', fontWeight: 'bold' }}>
+        <h2 style={{ margin: 0, fontSize: 15, color: '#58b6ff', fontWeight: 'bold' }}>
           Keyboard Shortcuts
         </h2>
         <button
           style={{
             background: 'rgba(15, 52, 96, 0.4)',
-            border: '1px solid #1a3050',
+            border: '1px solid #2a3a5c',
             color: '#8888aa',
             fontSize: 11,
             cursor: 'pointer',
             borderRadius: 4,
             padding: '3px 8px',
-            fontFamily: 'monospace',
+            fontFamily: 'var(--mono)',
             transition: 'all 0.12s ease',
           }}
           onClick={onClose}
@@ -133,7 +140,7 @@ const HelpOverlay: React.FC<{ onClose: () => void }> = ({ onClose }) => (
         <div key={section.category} style={{ marginBottom: 14 }}>
           <div style={{
             fontSize: 10,
-            color: '#53a8b6',
+            color: '#58b6ff',
             fontWeight: 'bold',
             marginBottom: 4,
             textTransform: 'uppercase',
@@ -170,7 +177,7 @@ const GroupSeparator: React.FC = () => (
   <div style={{
     width: 1,
     height: 22,
-    background: 'linear-gradient(to bottom, transparent, #1a3050, transparent)',
+    background: 'linear-gradient(to bottom, transparent, #2a3a5c, transparent)',
     margin: '0 4px',
   }} />
 );
@@ -193,6 +200,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onRedo,
   gridSnapEnabled,
   onToggleGridSnap,
+  truthTableOpen,
+  onToggleTruthTable,
 }) => {
   const [helpVisible, setHelpVisible] = useState(false);
 
@@ -252,6 +261,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             >
               #
             </TooltipButton>
+            <TooltipButton
+              tooltip={`Truth table: ${truthTableOpen ? 'hide' : 'show'}`}
+              shortcut="T"
+              style={{
+                ...styles.button,
+                ...(truthTableOpen ? styles.buttonActive : {}),
+              }}
+              onClick={onToggleTruthTable}
+            >
+              ⊦
+            </TooltipButton>
           </div>
 
           <GroupSeparator />
@@ -310,10 +330,10 @@ const styles: Record<string, React.CSSProperties> = {
     left: '50%',
     transform: 'translateX(-50%)',
     zIndex: 100,
-    background: 'rgba(10, 15, 30, 0.94)',
+    background: 'rgba(18, 26, 45, 0.92)',
     borderRadius: 10,
     padding: '5px 8px',
-    border: '1px solid #1a3050',
+    border: '1px solid #2a3a5c',
     backdropFilter: 'blur(8px)',
     userSelect: 'none',
     boxShadow: '0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(15,52,96,0.2)',
@@ -335,20 +355,20 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: 13,
-    background: '#111a30',
-    color: '#c0c0d0',
-    border: '1px solid #1a3050',
+    background: 'rgba(0,0,0,0.25)',
+    color: '#e6ecf7',
+    border: '1px solid #2a3a5c',
     borderRadius: 5,
     cursor: 'pointer',
     lineHeight: 1,
     padding: 0,
-    fontFamily: 'monospace',
+    fontFamily: 'var(--mono)',
     transition: 'all 0.12s ease',
   },
   buttonActive: {
     background: 'rgba(83, 168, 182, 0.15)',
-    borderColor: '#53a8b6',
-    color: '#53a8b6',
+    borderColor: '#58b6ff',
+    color: '#58b6ff',
   },
   buttonDisabled: {
     opacity: 0.3,
@@ -356,7 +376,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   zoomLabel: {
     fontSize: 10,
-    fontFamily: 'monospace',
+    fontFamily: 'var(--mono)',
     color: '#666',
     minWidth: 36,
     textAlign: 'center',
